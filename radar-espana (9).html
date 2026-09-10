@@ -1,0 +1,1181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Avisador de Radares — España</title>
+<style>
+  :root{
+    --bg: #0a0d12;
+    --bg-panel: #10151c;
+    --line: #1d242e;
+    --text: #e7ecf2;
+    --text-dim: #7c8896;
+    --amber: #ffb020;
+    --cyan: #3ac7e8;
+    --red: #ff5252;
+    --green: #35c988;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: radial-gradient(ellipse 900px 500px at 50% -10%, #121824, var(--bg) 55%);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden; user-select: none;
+  }
+  #app { display:flex; flex-direction:column; height:100vh; position: relative; }
+
+  /* ---- top status bar ---- */
+  #statusbar {
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 14px 22px; border-bottom: 1px solid var(--line);
+    font-size: 14px; color: var(--text-dim); letter-spacing: .02em;
+    background: rgba(16,21,28,.55); backdrop-filter: blur(10px);
+  }
+  #statusbar .dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:8px; background:var(--text-dim); }
+  #statusbar .dot.live { background: var(--green); box-shadow:0 0 8px var(--green); }
+  #statusbar .dot.err { background: var(--red); }
+
+  #speedwrap { display:flex; align-items:center; gap:10px; }
+  #speed { font-variant-numeric: tabular-nums; font-size:15px; color:var(--text); }
+  #speed.over { color: var(--red); font-weight:700; }
+  #limit-box { display:flex; align-items:center; gap:6px; color: var(--text-dim); font-size:13px; }
+  #limit-input {
+    width: 52px; background: var(--bg-panel); border:1px solid var(--line); color: var(--amber);
+    font-family: inherit; font-size: 14px; font-weight:600; text-align:center;
+    border-radius: 8px; padding: 4px 2px; font-variant-numeric: tabular-nums;
+  }
+  #limit-input:focus { outline: 1px solid var(--amber); }
+
+  /* ---- mark-radar floating button ---- */
+  #btn-mark {
+    position: absolute; right: 18px; bottom: 108px; z-index: 5;
+    width: 58px; height: 58px; border-radius: 50%; border:1px solid rgba(255,176,32,.35);
+    background: var(--bg-panel); color: var(--amber);
+    display: none; align-items:center; justify-content:center;
+    box-shadow: 0 6px 20px rgba(0,0,0,.45);
+  }
+  #btn-mark svg { width: 24px; height: 24px; }
+  #btn-mark:active { transform: scale(.92); }
+
+  /* ---- toast ---- */
+  #toast {
+    position: absolute; left: 50%; top: 70px; transform: translate(-50%, -12px);
+    background: #171d26; border:1px solid var(--line); color: var(--text);
+    padding: 11px 20px; border-radius: 14px; font-size: 14.5px; font-weight: 500;
+    opacity: 0; pointer-events:none; transition: opacity .25s ease, transform .25s ease;
+    z-index: 6; white-space: nowrap; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  /* ---- hero: nearest radar ---- */
+  #hero {
+    flex: 1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding: 10px 24px; gap: 20px;
+  }
+
+  #ring-wrap {
+    position: relative;
+    width: clamp(210px, 56vw, 280px); height: clamp(210px, 56vw, 280px);
+    border-radius: 50%;
+  }
+  #ring-svg { position:absolute; inset:0; width:100%; height:100%; transform: rotate(-90deg); }
+  .ring-bg { fill:none; stroke: var(--line); stroke-width: 7; }
+  #ring-progress {
+    fill:none; stroke: var(--cyan); stroke-width: 7; stroke-linecap: round;
+    stroke-dasharray: 603.19; stroke-dashoffset: 603.19;
+    transition: stroke-dashoffset .5s ease, stroke .3s ease;
+  }
+  #ring-progress.mid { stroke: var(--amber); }
+  #ring-progress.close { stroke: var(--red); }
+
+  @keyframes pulseGlow {
+    0%   { box-shadow: 0 0 0 0 rgba(255,82,82,.45); }
+    70%  { box-shadow: 0 0 0 28px rgba(255,82,82,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,82,82,0); }
+  }
+  #ring-wrap.pulse { animation: pulseGlow 1.5s ease-out infinite; }
+
+  #ring-content {
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; padding: 0 20px;
+  }
+
+  #radar-icon {
+    width: 42px; height:42px; margin-bottom: 12px; opacity:.9;
+    color: var(--text-dim); transition: color .3s ease, transform .3s ease;
+  }
+  #radar-icon.armed { color: var(--amber); }
+  #radar-icon.close { color: var(--red); transform: scale(1.1); }
+
+  #distance {
+    font-size: 68px; font-weight: 650; line-height: 1;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    color: var(--text);
+  }
+  #distance.close { color: var(--red); }
+  #distance.mid { color: var(--amber); }
+  #distance-unit { font-size: 17px; color: var(--text-dim); font-weight:500; margin-top:4px; letter-spacing:.03em; }
+
+  #radar-detail { font-size: 16px; color: var(--text-dim); max-width: 420px; }
+  #radar-detail b { color: var(--text); font-weight:600; }
+
+  #idle-msg { font-size: 16px; color: var(--text-dim); max-width: 220px; line-height:1.5; }
+
+  /* ---- upcoming list ---- */
+  #upcoming {
+    display:flex; gap:10px; padding: 16px 20px 20px; overflow-x:auto;
+    border-top: 1px solid var(--line);
+  }
+  .chip {
+    flex: 0 0 auto; background: var(--bg-panel); border:1px solid var(--line); border-left: 3px solid var(--cyan);
+    border-radius: 12px; padding: 10px 16px; min-width: 108px; text-align:center;
+  }
+  .chip.propio { border-left-color: var(--amber); }
+  .chip .d { font-size: 20px; font-weight:650; font-variant-numeric: tabular-nums; color: var(--cyan); }
+  .chip.propio .d { color: var(--amber); }
+  .chip .t { font-size: 11.5px; color: var(--text-dim); margin-top:2px; }
+
+  /* ---- controls ---- */
+  #controls {
+    display:flex; gap: 12px; padding: 0 20px 26px;
+  }
+  button {
+    flex:1; font-family: inherit; font-size: 17px; font-weight:600;
+    padding: 17px 0; border-radius: 16px; border: none; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:9px;
+    transition: transform .12s ease, opacity .12s ease;
+  }
+  button svg { width: 20px; height: 20px; flex-shrink:0; }
+  button:active { transform: scale(.97); }
+  #btn-start { background: linear-gradient(180deg, #ffc247, var(--amber)); color: #1a1200; box-shadow: 0 6px 18px rgba(255,176,32,.25); }
+  #btn-stop  { background: var(--bg-panel); color: var(--text); border:1px solid var(--line); display:none; }
+  #btn-mute  { background: var(--bg-panel); color: var(--text); border:1px solid var(--line); width: 64px; flex: 0 0 64px; display:none; }
+  #btn-mute svg { width: 22px; height: 22px; }
+
+  #footnote {
+    text-align:center; font-size: 11.5px; color: var(--text-dim); padding: 0 20px 16px; line-height:1.6;
+  }
+  #import-link { color: var(--cyan); text-decoration:none; }
+  #import-link:active { opacity:.7; }
+  #manage-link { color: var(--amber); text-decoration:none; }
+  #manage-link:active { opacity:.7; }
+  #import-status { display:block; margin-top:2px; }
+  #import-status.ok { color: var(--green); }
+  #import-status.err { color: var(--red); }
+
+  /* ---- panel de gestión de radares ---- */
+  #manage-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display: none; align-items: flex-end; justify-content: center; z-index: 20;
+  }
+  #manage-overlay.show { display: flex; }
+  #manage-panel {
+    width: 100%; max-width: 520px; max-height: 86vh; overflow-y: auto;
+    background: #0d1219; border: 1px solid var(--line); border-bottom: none;
+    border-radius: 22px 22px 0 0; padding: 18px 20px 28px;
+    box-shadow: 0 -10px 40px rgba(0,0,0,.5);
+  }
+  #manage-header { display:flex; align-items:center; justify-content:space-between; margin-bottom: 14px; }
+  #manage-header h2 { margin:0; font-size: 19px; font-weight:650; }
+  #manage-close {
+    width: 34px; height:34px; border-radius:50%; border:1px solid var(--line);
+    background: var(--bg-panel); color: var(--text-dim); font-size:16px; padding:0;
+  }
+
+  .seg-toggle { display:flex; gap:8px; margin-bottom: 16px; }
+  .seg-btn {
+    flex:1; background: var(--bg-panel); color: var(--text-dim); border:1px solid var(--line);
+    border-radius: 12px; padding: 11px 6px; font-size: 14px; font-weight:600;
+  }
+  .seg-btn.active { color: #1a1200; background: var(--amber); border-color: var(--amber); }
+
+  .manage-form label {
+    display:block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 12px; font-weight:500;
+  }
+  .manage-form input {
+    display:block; width:100%; margin-top:6px; background: var(--bg-panel); border:1px solid var(--line);
+    color: var(--text); font-family:inherit; font-size:15px; border-radius:10px; padding:11px 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .manage-form input:focus { outline:1px solid var(--cyan); }
+  .coord-row { display:flex; gap:8px; align-items:stretch; }
+  .coord-row input { flex:1; }
+  .gps-btn {
+    flex: 0 0 46px; margin-top:6px; background: var(--bg-panel); border:1px solid var(--line);
+    border-radius: 10px; font-size: 18px; color: var(--cyan); padding:0;
+  }
+  .field-row { display:flex; gap:12px; }
+  .field-row label { flex:1; }
+  .add-btn {
+    width:100%; background: linear-gradient(180deg, #ffc247, var(--amber)); color:#1a1200;
+    border:none; border-radius:12px; padding:14px 0; font-size:15.5px; font-weight:650; margin-top:2px;
+  }
+
+  #manage-msg { font-size: 13px; margin: 10px 2px 0; min-height: 16px; }
+  #manage-msg.ok { color: var(--green); }
+  #manage-msg.err { color: var(--red); }
+
+  #manage-list-wrap { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
+  #manage-list-title { font-size: 12.5px; color: var(--text-dim); margin-bottom: 10px; }
+  .mrow {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    background: var(--bg-panel); border:1px solid var(--line); border-radius: 12px;
+    padding: 11px 14px; margin-bottom: 8px;
+  }
+  .mrow .mmeta { font-size: 13.5px; line-height:1.4; }
+  .mrow .mmeta b { color: var(--text); }
+  .mrow .mmeta span { color: var(--text-dim); display:block; font-size:11.5px; }
+  .mrow .mdel {
+    flex:0 0 auto; width:36px; height:36px; border-radius:50%; border:1px solid var(--line);
+    background: transparent; color: var(--red); font-size:15px; padding:0;
+  }
+  #manage-empty { font-size: 13.5px; color: var(--text-dim); text-align:center; padding: 10px 0; }
+
+  /* ---- panel del mapa en vivo de Waze (iframe oficial) ---- */
+  #waze-overlay {
+    position: fixed; inset: 0; background: var(--bg); z-index: 21;
+    display: none; flex-direction: column;
+  }
+  #waze-overlay.show { display: flex; }
+  #waze-panel { flex:1; display:flex; flex-direction:column; min-height:0; }
+  #waze-header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 14px 18px; border-bottom: 1px solid var(--line); background: #0d1219;
+  }
+  #waze-header h2 { margin:0; font-size:17px; font-weight:650; }
+  #waze-header-btns { display:flex; gap:8px; }
+  #waze-header-btns button {
+    background: var(--bg-panel); color: var(--text); border:1px solid var(--line);
+    border-radius: 10px; padding: 9px 14px; font-size: 13.5px; font-weight:600;
+  }
+  #waze-close { width:38px; padding:9px 0 !important; }
+  #waze-frame-wrap { flex:1; position:relative; background:#05070a; }
+  #waze-iframe { width:100%; height:100%; border:0; display:block; }
+  #waze-empty {
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color: var(--text-dim); font-size:14px; text-align:center; padding: 0 30px;
+  }
+  #waze-footnote {
+    font-size: 11px; color: var(--text-dim); text-align:center; padding: 8px 16px; border-top:1px solid var(--line);
+  }
+
+  /* ---- candado de acceso (contraseña diaria) ---- */
+  #lock-overlay {
+    position: fixed; inset: 0; background: var(--bg); z-index: 999;
+    display: flex; align-items:center; justify-content:center; padding: 24px;
+  }
+  #lock-box { width:100%; max-width: 320px; text-align:center; }
+  #lock-box svg { width:38px; height:38px; color: var(--text-dim); margin-bottom: 14px; }
+  #lock-box h2 { font-size: 19px; margin: 0 0 6px; font-weight:650; }
+  #lock-box p { font-size: 13.5px; color: var(--text-dim); margin: 0 0 20px; line-height:1.5; }
+  #lock-input {
+    width:100%; background: var(--bg-panel); border:1px solid var(--line); color: var(--text);
+    font-family: inherit; font-size: 22px; text-align:center; letter-spacing: .08em;
+    border-radius: 12px; padding: 14px 10px; font-variant-numeric: tabular-nums;
+    text-transform: uppercase;
+  }
+  #lock-input:focus { outline: 1px solid var(--cyan); }
+  #lock-submit {
+    width:100%; margin-top: 12px; background: linear-gradient(180deg, #ffc247, var(--amber)); color:#1a1200;
+    border:none; border-radius:12px; padding:14px 0; font-size:16px; font-weight:650;
+  }
+  #lock-error { color: var(--red); font-size: 13px; margin-top: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<div id="lock-overlay">
+  <div id="lock-box">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="4" y="10" width="16" height="10" rx="2"/>
+      <path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+    </svg>
+    <h2>Acceso protegido</h2>
+    <p>Introduce la contraseña de hoy.</p>
+    <input id="lock-input" type="password" inputmode="text" autocomplete="off" placeholder="••••" maxlength="8">
+    <button id="lock-submit" type="button">Entrar</button>
+    <div id="lock-error"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var LOCK_KEY = "radar_unlock_fecha_v1";
+  var LETRAS = ["D","L","M","X","J","V","S"]; // Date.getDay(): 0=domingo … 6=sábado
+
+  function passwordDeHoy(d){
+    d = d || new Date();
+    var letra = LETRAS[d.getDay()];
+    var dia = d.getDate();
+    var mes = d.getMonth() + 1;
+    return letra + String(dia * 2) + String(mes * 3);
+  }
+  function claveDeHoy(d){
+    d = d || new Date();
+    return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+  }
+
+  var overlay = document.getElementById("lock-overlay");
+  var input = document.getElementById("lock-input");
+  var btn = document.getElementById("lock-submit");
+  var err = document.getElementById("lock-error");
+
+  function unlock(){
+    try { localStorage.setItem(LOCK_KEY, claveDeHoy()); } catch(e){}
+    overlay.style.display = "none";
+  }
+  function intentar(){
+    var val = (input.value || "").trim().toUpperCase();
+    if (val === passwordDeHoy()) {
+      unlock();
+    } else {
+      err.textContent = "Contraseña incorrecta. Inténtalo de nuevo.";
+      input.value = "";
+      input.focus();
+    }
+  }
+
+  try {
+    if (localStorage.getItem(LOCK_KEY) === claveDeHoy()) overlay.style.display = "none";
+  } catch(e){}
+
+  btn.addEventListener("click", intentar);
+  input.addEventListener("keydown", function(e){ if (e.key === "Enter") intentar(); });
+  setTimeout(function(){ input.focus(); }, 200);
+})();
+</script>
+
+<div id="app">
+
+  <div id="statusbar">
+    <div><span class="dot" id="gps-dot"></span><span id="gps-label">GPS desconectado</span></div>
+    <div id="speedwrap">
+      <div id="limit-box">
+        Límite
+        <input id="limit-input" type="number" inputmode="numeric" placeholder="—" min="10" max="130" step="10">
+      </div>
+      <div id="speed">— km/h</div>
+    </div>
+  </div>
+
+  <button id="btn-mark" title="Marcar radar en esta posición">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 21s-7-7.2-7-12a7 7 0 0 1 14 0c0 4.8-7 12-7 12z"/>
+      <circle cx="12" cy="9" r="2.5"/>
+    </svg>
+  </button>
+  <div id="toast"></div>
+
+  <div id="hero">
+    <div id="ring-wrap">
+      <svg id="ring-svg" viewBox="0 0 220 220">
+        <circle class="ring-bg" cx="110" cy="110" r="96"/>
+        <circle id="ring-progress" cx="110" cy="110" r="96"/>
+      </svg>
+      <div id="ring-content">
+        <svg id="radar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/>
+          <path d="M12 12 L12 3" stroke-linecap="round"/>
+          <path d="M5.5 12a6.5 6.5 0 0 1 13 0" stroke-linecap="round"/>
+          <path d="M2.5 12a9.5 9.5 0 0 1 19 0" stroke-linecap="round" opacity=".55"/>
+        </svg>
+        <div id="idle-msg">Pulsa «Iniciar» para activar el aviso de radares.</div>
+        <div id="live-readout" style="display:none">
+          <div id="distance">—</div>
+          <div id="distance-unit">metros</div>
+        </div>
+      </div>
+    </div>
+    <div id="radar-detail"></div>
+  </div>
+
+  <div id="upcoming"></div>
+
+  <div id="controls">
+    <button id="btn-start">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      Iniciar aviso de radares
+    </button>
+    <button id="btn-stop">
+      <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+      Detener
+    </button>
+    <button id="btn-mute" data-muted="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 9v6h4l5 4V5L8 9H4z"/>
+        <path d="M16.5 8.5a5 5 0 0 1 0 7"/>
+        <path d="M19 6a8 8 0 0 1 0 12"/>
+      </svg>
+    </button>
+  </div>
+
+  <div id="footnote">
+    Avisador basado en ubicaciones registradas — legal según el Reglamento General de Circulación (avisa, no detecta).<br>
+    736 puntos de control de velocidad media de la DGT (España, incl. Canarias) + tus propios radares marcados (📍).<br>
+    <a href="#" id="import-link">Reimportar / actualizar el listado oficial (archivo XML) →</a>
+    · <a href="#" id="manage-link">Añadir / gestionar radares manualmente →</a><br>
+    <a href="#" id="waze-link">🌐 Ver mapa en vivo de Waze (oficial, embebido) →</a>
+    <span id="import-status"></span>
+  </div>
+
+  <input type="file" id="import-file" accept=".xml,text/xml" style="display:none">
+
+  <div id="waze-overlay">
+    <div id="waze-panel">
+      <div id="waze-header">
+        <h2>Mapa en vivo de Waze</h2>
+        <div id="waze-header-btns">
+          <button id="waze-recenter" type="button">📍 Recentrar</button>
+          <button id="waze-close" type="button">✕</button>
+        </div>
+      </div>
+      <div id="waze-frame-wrap">
+        <iframe id="waze-iframe" src="" allow="geolocation"></iframe>
+        <div id="waze-empty">Esperando posición GPS para centrar el mapa…</div>
+      </div>
+      <div id="waze-footnote">Mapa oficial embebido de Waze (embed.waze.com) — datos y marca de Waze/Google. No se extrae ni almacena ninguna información.</div>
+    </div>
+  </div>
+
+  <div id="manage-overlay">
+    <div id="manage-panel">
+      <div id="manage-header">
+        <h2>Tus radares</h2>
+        <button id="manage-close" type="button">✕</button>
+      </div>
+
+      <div class="seg-toggle">
+        <button class="seg-btn active" data-type="fijo" type="button">📍 Radar fijo</button>
+        <button class="seg-btn" data-type="tramo" type="button">↔ Tramo (vel. media)</button>
+      </div>
+
+      <div id="form-fijo" class="manage-form">
+        <label>Coordenadas
+          <div class="coord-row">
+            <input id="f-coords" placeholder="40.4168, -3.7038">
+            <button class="gps-btn" data-target="f-coords" type="button">📡</button>
+          </div>
+        </label>
+        <div class="field-row">
+          <label>Límite km/h <input id="f-limit" type="number" inputmode="numeric" placeholder="opcional"></label>
+          <label>Vía / ref. <input id="f-via" placeholder="ej. A-2 km 34"></label>
+        </div>
+        <button id="f-add" class="add-btn" type="button">+ Añadir radar</button>
+      </div>
+
+      <div id="form-tramo" class="manage-form" style="display:none">
+        <label>Inicio del tramo
+          <div class="coord-row">
+            <input id="t-coords-a" placeholder="40.4168, -3.7038">
+            <button class="gps-btn" data-target="t-coords-a" type="button">📡</button>
+          </div>
+        </label>
+        <label>Fin del tramo
+          <div class="coord-row">
+            <input id="t-coords-b" placeholder="40.4200, -3.7100">
+            <button class="gps-btn" data-target="t-coords-b" type="button">📡</button>
+          </div>
+        </label>
+        <div class="field-row">
+          <label>Límite km/h <input id="t-limit" type="number" inputmode="numeric" placeholder="opcional"></label>
+          <label>Vía / ref. <input id="t-via" placeholder="opcional"></label>
+        </div>
+        <button id="t-add" class="add-btn" type="button">+ Añadir tramo</button>
+      </div>
+
+      <div id="manage-msg"></div>
+
+      <div id="manage-list-wrap">
+        <div id="manage-list-title">Radares y tramos añadidos por ti</div>
+        <div id="manage-list"></div>
+      </div>
+    </div>
+  </div>
+
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- config ----------
+  var ALERT_FAR = 1200;     // m: entra en la lista de "próximos"
+  var ALERT_MID = 500;      // m: aviso amarillo + voz
+  var ALERT_NEAR = 200;     // m: aviso rojo + voz
+  var ANNOUNCE_AT = [900, 400, 150]; // distancias (m) en las que se anuncia por voz cada radar
+  var RING_CIRC = 2 * Math.PI * 96;  // circunferencia del anillo (r=96, ver CSS)
+  var SPEED_ALERT_COOLDOWN = 15000;  // ms entre recordatorios de exceso de velocidad
+
+
+  // Cuando conviertes los datos oficiales con convertir_radares.py en modo "--embed",
+  // esta línea se sustituye automáticamente por el array real de radares.
+  // Si la ves tal cual ([]), es que aún no has generado la versión con datos oficiales
+  // — la app funciona igualmente, solo con los radares que tú marques (📍).
+  var EMBEDDED_RADARES = [{"lat":41.6192,"lon":-0.9496,"maxspeed":null,"fuente":"DGT"},{"lat":41.6088,"lon":-0.915697,"maxspeed":null,"fuente":"DGT"},{"lat":40.716904,"lon":-4.160718,"maxspeed":null,"fuente":"DGT"},{"lat":40.699097,"lon":-4.128269,"maxspeed":null,"fuente":"DGT"},{"lat":40.66991,"lon":-4.10756,"maxspeed":null,"fuente":"DGT"},{"lat":40.71429,"lon":-4.16522,"maxspeed":null,"fuente":"DGT"},{"lat":38.405853,"lon":-3.4982207,"maxspeed":null,"fuente":"DGT"},{"lat":38.378616,"lon":-3.508122,"maxspeed":null,"fuente":"DGT"},{"lat":43.28963,"lon":-8.498611,"maxspeed":null,"fuente":"DGT"},{"lat":43.278763,"lon":-8.526375,"maxspeed":null,"fuente":"DGT"},{"lat":43.3832,"lon":-7.349219,"maxspeed":null,"fuente":"DGT"},{"lat":43.377068,"lon":-7.407799,"maxspeed":null,"fuente":"DGT"},{"lat":43.49301,"lon":-8.156919,"maxspeed":null,"fuente":"DGT"},{"lat":43.4824,"lon":-8.157314,"maxspeed":null,"fuente":"DGT"},{"lat":43.524937,"lon":-8.086475,"maxspeed":null,"fuente":"DGT"},{"lat":43.499447,"lon":-8.034757,"maxspeed":null,"fuente":"DGT"},{"lat":42.8471,"lon":-5.8753,"maxspeed":null,"fuente":"DGT"},{"lat":42.863,"lon":-5.8757,"maxspeed":null,"fuente":"DGT"},{"lat":36.508537,"lon":-4.637342,"maxspeed":null,"fuente":"DGT"},{"lat":36.498386,"lon":-4.687859,"maxspeed":null,"fuente":"DGT"},{"lat":36.49846,"lon":-4.687993,"maxspeed":null,"fuente":"DGT"},{"lat":36.5086,"lon":-4.63743,"maxspeed":null,"fuente":"DGT"},{"lat":36.77529,"lon":-4.425749,"maxspeed":null,"fuente":"DGT"},{"lat":36.82034,"lon":-4.445579,"maxspeed":null,"fuente":"DGT"},{"lat":36.862186,"lon":-4.437532,"maxspeed":null,"fuente":"DGT"},{"lat":36.883026,"lon":-4.423358,"maxspeed":null,"fuente":"DGT"},{"lat":42.39616,"lon":-7.850268,"maxspeed":null,"fuente":"DGT"},{"lat":42.368458,"lon":-7.854629,"maxspeed":null,"fuente":"DGT"},{"lat":42.917484,"lon":-8.495357,"maxspeed":null,"fuente":"DGT"},{"lat":42.926373,"lon":-8.4832,"maxspeed":null,"fuente":"DGT"},{"lat":42.27333,"lon":-8.664771,"maxspeed":null,"fuente":"DGT"},{"lat":42.24053,"lon":-8.664367,"maxspeed":null,"fuente":"DGT"},{"lat":37.67935,"lon":-1.7097,"maxspeed":null,"fuente":"DGT"},{"lat":37.67441,"lon":-1.70734,"maxspeed":null,"fuente":"DGT"},{"lat":37.67074,"lon":-1.7097,"maxspeed":null,"fuente":"DGT"},{"lat":37.67964,"lon":-1.71095,"maxspeed":null,"fuente":"DGT"},{"lat":37.939655,"lon":-1.175882,"maxspeed":null,"fuente":"DGT"},{"lat":37.93577,"lon":-1.189986,"maxspeed":null,"fuente":"DGT"},{"lat":43.37759,"lon":-7.407311,"maxspeed":null,"fuente":"DGT"},{"lat":43.38156,"lon":-7.353846,"maxspeed":null,"fuente":"DGT"},{"lat":43.54287,"lon":-7.04189,"maxspeed":null,"fuente":"DGT"},{"lat":43.54311,"lon":-7.02694,"maxspeed":null,"fuente":"DGT"},{"lat":43.54286,"lon":-7.02717,"maxspeed":null,"fuente":"DGT"},{"lat":43.54282,"lon":-7.04073,"maxspeed":null,"fuente":"DGT"},{"lat":41.8533,"lon":-5.0133,"maxspeed":null,"fuente":"DGT"},{"lat":41.8381,"lon":-5.0108,"maxspeed":null,"fuente":"DGT"},{"lat":42.4439,"lon":-4.6942,"maxspeed":null,"fuente":"DGT"},{"lat":42.3524,"lon":-4.6245,"maxspeed":null,"fuente":"DGT"},{"lat":42.3241,"lon":-4.6042,"maxspeed":null,"fuente":"DGT"},{"lat":42.0378,"lon":-4.5596,"maxspeed":null,"fuente":"DGT"},{"lat":42.141,"lon":-4.6731,"maxspeed":null,"fuente":"DGT"},{"lat":42.1175,"lon":-4.6457,"maxspeed":null,"fuente":"DGT"},{"lat":42.215,"lon":-4.8479,"maxspeed":null,"fuente":"DGT"},{"lat":43.3511,"lon":-3.4144,"maxspeed":null,"fuente":"DGT"},{"lat":43.3675,"lon":-3.4225,"maxspeed":null,"fuente":"DGT"},{"lat":43.3563,"lon":-3.4167,"maxspeed":null,"fuente":"DGT"},{"lat":28.46483,"lon":-16.43921,"maxspeed":null,"fuente":"DGT"},{"lat":28.47274,"lon":-16.42682,"maxspeed":null,"fuente":"DGT"},{"lat":28.46436,"lon":-16.4397,"maxspeed":null,"fuente":"DGT"},{"lat":28.47246,"lon":-16.42673,"maxspeed":null,"fuente":"DGT"},{"lat":36.467777,"lon":-6.176094,"maxspeed":null,"fuente":"DGT"},{"lat":36.469574,"lon":-6.205308,"maxspeed":null,"fuente":"DGT"},{"lat":36.46985,"lon":-6.205366,"maxspeed":null,"fuente":"DGT"},{"lat":36.4675,"lon":-6.17053,"maxspeed":null,"fuente":"DGT"},{"lat":42.2377,"lon":-4.6072,"maxspeed":null,"fuente":"DGT"},{"lat":42.5536,"lon":-5.714,"maxspeed":null,"fuente":"DGT"},{"lat":42.5416,"lon":-5.7333,"maxspeed":null,"fuente":"DGT"},{"lat":41.39613,"lon":-4.466612,"maxspeed":null,"fuente":"DGT"},{"lat":41.390297,"lon":-4.474615,"maxspeed":null,"fuente":"DGT"},{"lat":41.40546,"lon":-4.397475,"maxspeed":null,"fuente":"DGT"},{"lat":41.401524,"lon":-4.431199,"maxspeed":null,"fuente":"DGT"},{"lat":36.581997,"lon":-5.067223,"maxspeed":null,"fuente":"DGT"},{"lat":36.59244,"lon":-5.068924,"maxspeed":null,"fuente":"DGT"},{"lat":41.30326,"lon":-1.94488,"maxspeed":null,"fuente":"DGT"},{"lat":41.33214,"lon":-1.65314,"maxspeed":null,"fuente":"DGT"},{"lat":41.48975,"lon":-1.36326,"maxspeed":null,"fuente":"DGT"},{"lat":41.623283,"lon":-1.016689,"maxspeed":null,"fuente":"DGT"},{"lat":41.64744,"lon":-0.96506,"maxspeed":null,"fuente":"DGT"},{"lat":41.720303,"lon":-0.8554723,"maxspeed":null,"fuente":"DGT"},{"lat":42.519676,"lon":-0.3505698,"maxspeed":null,"fuente":"DGT"},{"lat":42.11215,"lon":-0.16136,"maxspeed":null,"fuente":"DGT"},{"lat":42.14442,"lon":-0.32866,"maxspeed":null,"fuente":"DGT"},{"lat":42.757904,"lon":-0.5259808,"maxspeed":null,"fuente":"DGT"},{"lat":42.74819,"lon":-0.519751,"maxspeed":null,"fuente":"DGT"},{"lat":42.31913,"lon":-2.09617,"maxspeed":null,"fuente":"DGT"},{"lat":42.31173,"lon":-1.98491,"maxspeed":null,"fuente":"DGT"},{"lat":40.746853,"lon":-1.3323933,"maxspeed":null,"fuente":"DGT"},{"lat":41.38756,"lon":-1.18134,"maxspeed":null,"fuente":"DGT"},{"lat":41.69694,"lon":-0.86944,"maxspeed":null,"fuente":"DGT"},{"lat":42.569714,"lon":-2.8799694,"maxspeed":null,"fuente":"DGT"},{"lat":42.298397,"lon":-1.975773,"maxspeed":null,"fuente":"DGT"},{"lat":42.1115,"lon":-0.44932,"maxspeed":null,"fuente":"DGT"},{"lat":42.046288,"lon":0.1539053,"maxspeed":null,"fuente":"DGT"},{"lat":42.52766,"lon":-0.36098,"maxspeed":null,"fuente":"DGT"},{"lat":40.19317,"lon":-0.9105437,"maxspeed":null,"fuente":"DGT"},{"lat":41.2112,"lon":-0.4671148,"maxspeed":null,"fuente":"DGT"},{"lat":40.12388,"lon":-0.769511,"maxspeed":null,"fuente":"DGT"},{"lat":42.53827,"lon":-2.777289,"maxspeed":null,"fuente":"DGT"},{"lat":42.44163,"lon":-2.54181,"maxspeed":null,"fuente":"DGT"},{"lat":42.439632,"lon":-2.879081,"maxspeed":null,"fuente":"DGT"},{"lat":36.460518,"lon":-6.2491813,"maxspeed":null,"fuente":"DGT"},{"lat":36.470097,"lon":-5.7929974,"maxspeed":null,"fuente":"DGT"},{"lat":36.20978,"lon":-5.38096,"maxspeed":null,"fuente":"DGT"},{"lat":36.10714,"lon":-5.70872,"maxspeed":null,"fuente":"DGT"},{"lat":36.0238,"lon":-5.59423,"maxspeed":null,"fuente":"DGT"},{"lat":36.83327,"lon":-6.066566,"maxspeed":null,"fuente":"DGT"},{"lat":37.760784,"lon":-4.824422,"maxspeed":null,"fuente":"DGT"},{"lat":37.77062,"lon":-4.8213596,"maxspeed":null,"fuente":"DGT"},{"lat":37.81609,"lon":-4.7974367,"maxspeed":null,"fuente":"DGT"},{"lat":37.80637,"lon":-5.09753,"maxspeed":null,"fuente":"DGT"},{"lat":37.433575,"lon":-4.54488,"maxspeed":null,"fuente":"DGT"},{"lat":38.184116,"lon":-5.0325646,"maxspeed":null,"fuente":"DGT"},{"lat":37.04469,"lon":-6.54887,"maxspeed":null,"fuente":"DGT"},{"lat":37.35998,"lon":-6.525634,"maxspeed":null,"fuente":"DGT"},{"lat":37.35235,"lon":-6.57523,"maxspeed":null,"fuente":"DGT"},{"lat":37.20564,"lon":-7.0181,"maxspeed":null,"fuente":"DGT"},{"lat":37.27171,"lon":-6.985113,"maxspeed":null,"fuente":"DGT"},{"lat":37.268856,"lon":-6.990282,"maxspeed":null,"fuente":"DGT"},{"lat":37.509636,"lon":-5.4031324,"maxspeed":null,"fuente":"DGT"},{"lat":37.484158,"lon":-5.5246296,"maxspeed":null,"fuente":"DGT"},{"lat":37.43262,"lon":-5.8741236,"maxspeed":null,"fuente":"DGT"},{"lat":37.38765,"lon":-6.03394,"maxspeed":null,"fuente":"DGT"},{"lat":37.22931,"lon":-5.092962,"maxspeed":null,"fuente":"DGT"},{"lat":37.371918,"lon":-5.882567,"maxspeed":null,"fuente":"DGT"},{"lat":37.27387,"lon":-5.66339,"maxspeed":null,"fuente":"DGT"},{"lat":37.38601,"lon":-5.93237,"maxspeed":null,"fuente":"DGT"},{"lat":37.343002,"lon":-5.985924,"maxspeed":null,"fuente":"DGT"},{"lat":42.90851,"lon":-7.304217,"maxspeed":null,"fuente":"DGT"},{"lat":42.743664,"lon":-7.052079,"maxspeed":null,"fuente":"DGT"},{"lat":42.988712,"lon":-8.29037,"maxspeed":null,"fuente":"DGT"},{"lat":42.684093,"lon":-8.744259,"maxspeed":null,"fuente":"DGT"},{"lat":42.728012,"lon":-8.715587,"maxspeed":null,"fuente":"DGT"},{"lat":42.6752,"lon":-8.842166,"maxspeed":null,"fuente":"DGT"},{"lat":42.287437,"lon":-7.896729,"maxspeed":null,"fuente":"DGT"},{"lat":42.50861,"lon":-8.712846,"maxspeed":null,"fuente":"DGT"},{"lat":42.436123,"lon":-8.802953,"maxspeed":null,"fuente":"DGT"},{"lat":43.32987,"lon":-8.39528,"maxspeed":null,"fuente":"DGT"},{"lat":43.192368,"lon":-7.968867,"maxspeed":null,"fuente":"DGT"},{"lat":42.8066,"lon":-8.613655,"maxspeed":null,"fuente":"DGT"},{"lat":43.174767,"lon":-7.713543,"maxspeed":null,"fuente":"DGT"},{"lat":43.18502,"lon":-7.828699,"maxspeed":null,"fuente":"DGT"},{"lat":42.302628,"lon":-8.142777,"maxspeed":null,"fuente":"DGT"},{"lat":42.28743,"lon":-7.8751163,"maxspeed":null,"fuente":"DGT"},{"lat":42.05526,"lon":-7.10273,"maxspeed":null,"fuente":"DGT"},{"lat":42.246887,"lon":-8.695972,"maxspeed":null,"fuente":"DGT"},{"lat":42.21744,"lon":-8.684554,"maxspeed":null,"fuente":"DGT"},{"lat":43.24344,"lon":-8.171427,"maxspeed":null,"fuente":"DGT"},{"lat":42.788548,"lon":-8.649507,"maxspeed":null,"fuente":"DGT"},{"lat":42.651413,"lon":-8.901907,"maxspeed":null,"fuente":"DGT"},{"lat":41.91996,"lon":-7.457119,"maxspeed":null,"fuente":"DGT"},{"lat":42.15782,"lon":-8.625822,"maxspeed":null,"fuente":"DGT"},{"lat":42.86265,"lon":-7.151007,"maxspeed":null,"fuente":"DGT"},{"lat":37.243286,"lon":-3.739078,"maxspeed":null,"fuente":"DGT"},{"lat":37.38035,"lon":-3.0561483,"maxspeed":null,"fuente":"DGT"},{"lat":37.06451,"lon":-2.3831718,"maxspeed":null,"fuente":"DGT"},{"lat":37.235573,"lon":-3.4973602,"maxspeed":null,"fuente":"DGT"},{"lat":37.237656,"lon":-1.8540592,"maxspeed":null,"fuente":"DGT"},{"lat":37.78122,"lon":-3.858778,"maxspeed":null,"fuente":"DGT"},{"lat":43.332726,"lon":-8.378234,"maxspeed":null,"fuente":"DGT"},{"lat":43.475742,"lon":-8.17314,"maxspeed":null,"fuente":"DGT"},{"lat":43.091114,"lon":-8.181534,"maxspeed":null,"fuente":"DGT"},{"lat":42.90827,"lon":-8.403362,"maxspeed":null,"fuente":"DGT"},{"lat":42.492306,"lon":-7.696417,"maxspeed":null,"fuente":"DGT"},{"lat":43.255394,"lon":-7.6698713,"maxspeed":null,"fuente":"DGT"},{"lat":42.087814,"lon":-7.720481,"maxspeed":null,"fuente":"DGT"},{"lat":42.308296,"lon":-8.108015,"maxspeed":null,"fuente":"DGT"},{"lat":42.18361,"lon":-8.633948,"maxspeed":null,"fuente":"DGT"},{"lat":42.422993,"lon":-8.650775,"maxspeed":null,"fuente":"DGT"},{"lat":42.244877,"lon":-8.596446,"maxspeed":null,"fuente":"DGT"},{"lat":42.166744,"lon":-8.383896,"maxspeed":null,"fuente":"DGT"},{"lat":42.399193,"lon":-2.4711664,"maxspeed":null,"fuente":"DGT"},{"lat":37.005154,"lon":-5.038441,"maxspeed":null,"fuente":"DGT"},{"lat":37.626774,"lon":-4.1186585,"maxspeed":null,"fuente":"DGT"},{"lat":37.15403,"lon":-3.646109,"maxspeed":null,"fuente":"DGT"},{"lat":37.540592,"lon":-3.635228,"maxspeed":null,"fuente":"DGT"},{"lat":36.73367,"lon":-4.578066,"maxspeed":null,"fuente":"DGT"},{"lat":36.702724,"lon":-5.127789,"maxspeed":null,"fuente":"DGT"},{"lat":37.34006,"lon":-3.28454,"maxspeed":null,"fuente":"DGT"},{"lat":36.70791,"lon":-3.394431,"maxspeed":null,"fuente":"DGT"},{"lat":37.855354,"lon":-3.351635,"maxspeed":null,"fuente":"DGT"},{"lat":41.411366,"lon":-1.304202,"maxspeed":null,"fuente":"DGT"},{"lat":41.72967,"lon":-0.809138,"maxspeed":null,"fuente":"DGT"},{"lat":41.46667,"lon":-1.36487,"maxspeed":null,"fuente":"DGT"},{"lat":41.769554,"lon":-1.202658,"maxspeed":null,"fuente":"DGT"},{"lat":41.898697,"lon":-1.41178,"maxspeed":null,"fuente":"DGT"},{"lat":41.81333,"lon":-1.47057,"maxspeed":null,"fuente":"DGT"},{"lat":41.99351,"lon":-1.21896,"maxspeed":null,"fuente":"DGT"},{"lat":41.97484,"lon":0.48584,"maxspeed":null,"fuente":"DGT"},{"lat":42.1546,"lon":-0.43949,"maxspeed":null,"fuente":"DGT"},{"lat":41.41516,"lon":0.3351,"maxspeed":null,"fuente":"DGT"},{"lat":41.520145,"lon":0.20178248,"maxspeed":null,"fuente":"DGT"},{"lat":40.95329,"lon":-0.22789,"maxspeed":null,"fuente":"DGT"},{"lat":41.0518,"lon":-0.17624,"maxspeed":null,"fuente":"DGT"},{"lat":42.44531,"lon":-2.51685,"maxspeed":null,"fuente":"DGT"},{"lat":42.42856,"lon":-2.27502,"maxspeed":null,"fuente":"DGT"},{"lat":37.963062,"lon":-3.987978,"maxspeed":null,"fuente":"DGT"},{"lat":37.869698,"lon":-4.167153,"maxspeed":null,"fuente":"DGT"},{"lat":36.966084,"lon":-1.9901714,"maxspeed":null,"fuente":"DGT"},{"lat":36.834076,"lon":-2.283574,"maxspeed":null,"fuente":"DGT"},{"lat":39.48231,"lon":-1.059283,"maxspeed":null,"fuente":"DGT"},{"lat":39.041046,"lon":-0.2227671,"maxspeed":null,"fuente":"DGT"},{"lat":38.99116,"lon":-0.494551,"maxspeed":null,"fuente":"DGT"},{"lat":40.522682,"lon":0.4493639,"maxspeed":null,"fuente":"DGT"},{"lat":38.527214,"lon":-0.2015791,"maxspeed":null,"fuente":"DGT"},{"lat":37.90893,"lon":-0.7523943,"maxspeed":null,"fuente":"DGT"},{"lat":37.908737,"lon":-0.7526704,"maxspeed":null,"fuente":"DGT"},{"lat":38.56061,"lon":-0.1174709,"maxspeed":null,"fuente":"DGT"},{"lat":38.67331,"lon":0.0385027,"maxspeed":null,"fuente":"DGT"},{"lat":37.62027,"lon":-0.9488051,"maxspeed":null,"fuente":"DGT"},{"lat":37.815662,"lon":-0.9375236,"maxspeed":null,"fuente":"DGT"},{"lat":37.3509,"lon":-5.99562,"maxspeed":null,"fuente":"DGT"},{"lat":36.46284,"lon":-6.25223,"maxspeed":null,"fuente":"DGT"},{"lat":37.30816,"lon":-6.89282,"maxspeed":null,"fuente":"DGT"},{"lat":36.5055,"lon":-6.24842,"maxspeed":null,"fuente":"DGT"},{"lat":36.52855,"lon":-6.15207,"maxspeed":null,"fuente":"DGT"},{"lat":37.50831,"lon":-6.80256,"maxspeed":null,"fuente":"DGT"},{"lat":36.22666,"lon":-5.5709224,"maxspeed":null,"fuente":"DGT"},{"lat":37.61869,"lon":-6.69224,"maxspeed":null,"fuente":"DGT"},{"lat":36.205,"lon":-5.38438,"maxspeed":null,"fuente":"DGT"},{"lat":37.58059,"lon":-4.85271,"maxspeed":null,"fuente":"DGT"},{"lat":38.25786,"lon":-4.97748,"maxspeed":null,"fuente":"DGT"},{"lat":37.40291,"lon":-5.9472,"maxspeed":null,"fuente":"DGT"},{"lat":37.404198,"lon":-5.9477587,"maxspeed":null,"fuente":"DGT"},{"lat":37.4983,"lon":-6.01051,"maxspeed":null,"fuente":"DGT"},{"lat":37.4193,"lon":-5.9458,"maxspeed":null,"fuente":"DGT"},{"lat":37.36296,"lon":-6.03451,"maxspeed":null,"fuente":"DGT"},{"lat":37.45684,"lon":-4.42685,"maxspeed":null,"fuente":"DGT"},{"lat":37.23422,"lon":-6.8786,"maxspeed":null,"fuente":"DGT"},{"lat":37.79782,"lon":-6.71875,"maxspeed":null,"fuente":"DGT"},{"lat":38.29717,"lon":-5.245725,"maxspeed":null,"fuente":"DGT"},{"lat":37.62899,"lon":-5.77453,"maxspeed":null,"fuente":"DGT"},{"lat":37.23022,"lon":-5.50718,"maxspeed":null,"fuente":"DGT"},{"lat":37.65788,"lon":-6.22833,"maxspeed":null,"fuente":"DGT"},{"lat":37.31947,"lon":-6.23279,"maxspeed":null,"fuente":"DGT"},{"lat":37.34704,"lon":-5.99084,"maxspeed":null,"fuente":"DGT"},{"lat":37.34355,"lon":-5.98678,"maxspeed":null,"fuente":"DGT"},{"lat":36.81284,"lon":-5.75209,"maxspeed":null,"fuente":"DGT"},{"lat":36.64519,"lon":-6.17808,"maxspeed":null,"fuente":"DGT"},{"lat":37.52579,"lon":-6.08225,"maxspeed":null,"fuente":"DGT"},{"lat":37.38615,"lon":-5.932272,"maxspeed":null,"fuente":"DGT"},{"lat":37.37187,"lon":-5.88256,"maxspeed":null,"fuente":"DGT"},{"lat":37.34799,"lon":-5.83239,"maxspeed":null,"fuente":"DGT"},{"lat":36.634533,"lon":-6.1966634,"maxspeed":null,"fuente":"DGT"},{"lat":42.76942,"lon":-0.5333647,"maxspeed":null,"fuente":"DGT"},{"lat":42.782505,"lon":-0.5417597,"maxspeed":null,"fuente":"DGT"},{"lat":42.53891,"lon":-0.3575,"maxspeed":null,"fuente":"DGT"},{"lat":43.01765,"lon":-1.90732,"maxspeed":null,"fuente":"DGT"},{"lat":41.57576,"lon":-1.11063,"maxspeed":null,"fuente":"DGT"},{"lat":41.65679,"lon":-0.84097,"maxspeed":null,"fuente":"DGT"},{"lat":42.03742,"lon":-1.64604,"maxspeed":null,"fuente":"DGT"},{"lat":42.73144,"lon":-0.31063,"maxspeed":null,"fuente":"DGT"},{"lat":42.73642,"lon":-0.3153,"maxspeed":null,"fuente":"DGT"},{"lat":42.14157,"lon":-0.36122,"maxspeed":null,"fuente":"DGT"},{"lat":41.01965,"lon":-0.09443,"maxspeed":null,"fuente":"DGT"},{"lat":41.01712,"lon":0.19929,"maxspeed":null,"fuente":"DGT"},{"lat":42.46868,"lon":-2.41766,"maxspeed":null,"fuente":"DGT"},{"lat":42.14203,"lon":-0.35396,"maxspeed":null,"fuente":"DGT"},{"lat":42.426697,"lon":-2.423419,"maxspeed":null,"fuente":"DGT"},{"lat":42.07934,"lon":-1.79527,"maxspeed":null,"fuente":"DGT"},{"lat":43.065994,"lon":-1.617763,"maxspeed":null,"fuente":"DGT"},{"lat":42.91613,"lon":-2.19164,"maxspeed":null,"fuente":"DGT"},{"lat":40.17215,"lon":-3.2924447,"maxspeed":null,"fuente":"DGT"},{"lat":38.910446,"lon":-2.9562633,"maxspeed":null,"fuente":"DGT"},{"lat":39.59558,"lon":-3.08957,"maxspeed":null,"fuente":"DGT"},{"lat":40.12547,"lon":-4.2240653,"maxspeed":null,"fuente":"DGT"},{"lat":39.273846,"lon":-3.7444413,"maxspeed":null,"fuente":"DGT"},{"lat":39.31168,"lon":-3.47672,"maxspeed":null,"fuente":"DGT"},{"lat":38.961857,"lon":-3.5075254,"maxspeed":null,"fuente":"DGT"},{"lat":40.556282,"lon":-3.9630144,"maxspeed":null,"fuente":"DGT"},{"lat":38.254456,"lon":-6.030019,"maxspeed":null,"fuente":"DGT"},{"lat":38.347385,"lon":-6.7868986,"maxspeed":null,"fuente":"DGT"},{"lat":40.273304,"lon":-4.008927,"maxspeed":null,"fuente":"DGT"},{"lat":40.41474,"lon":-3.9449215,"maxspeed":null,"fuente":"DGT"},{"lat":40.68863,"lon":-3.390162,"maxspeed":null,"fuente":"DGT"},{"lat":40.585346,"lon":-3.0627983,"maxspeed":null,"fuente":"DGT"},{"lat":40.686535,"lon":-3.173175,"maxspeed":null,"fuente":"DGT"},{"lat":40.02536,"lon":-5.848693,"maxspeed":null,"fuente":"DGT"},{"lat":39.916866,"lon":-5.5609946,"maxspeed":null,"fuente":"DGT"},{"lat":40.558197,"lon":-4.2617764,"maxspeed":null,"fuente":"DGT"},{"lat":39.59234,"lon":-3.8520865,"maxspeed":null,"fuente":"DGT"},{"lat":40.06861,"lon":-3.6447222,"maxspeed":null,"fuente":"DGT"},{"lat":39.869522,"lon":-3.3005495,"maxspeed":null,"fuente":"DGT"},{"lat":39.999466,"lon":-6.5491147,"maxspeed":null,"fuente":"DGT"},{"lat":39.9079,"lon":-6.47875,"maxspeed":null,"fuente":"DGT"},{"lat":38.960907,"lon":-5.910465,"maxspeed":null,"fuente":"DGT"},{"lat":39.96086,"lon":-4.903947,"maxspeed":null,"fuente":"DGT"},{"lat":39.91978,"lon":-5.0822353,"maxspeed":null,"fuente":"DGT"},{"lat":39.876846,"lon":-4.2201104,"maxspeed":null,"fuente":"DGT"},{"lat":40.065975,"lon":-3.896849,"maxspeed":null,"fuente":"DGT"},{"lat":40.16705,"lon":-3.8902953,"maxspeed":null,"fuente":"DGT"},{"lat":39.58009,"lon":-3.6965482,"maxspeed":null,"fuente":"DGT"},{"lat":39.28981,"lon":-3.7496371,"maxspeed":null,"fuente":"DGT"},{"lat":40.07973,"lon":-3.6378605,"maxspeed":null,"fuente":"DGT"},{"lat":38.62699,"lon":-6.3689785,"maxspeed":null,"fuente":"DGT"},{"lat":38.38251,"lon":-6.3381076,"maxspeed":null,"fuente":"DGT"},{"lat":39.29308,"lon":-2.371341,"maxspeed":null,"fuente":"DGT"},{"lat":39.295418,"lon":-2.3769495,"maxspeed":null,"fuente":"DGT"},{"lat":39.02962,"lon":-5.7674475,"maxspeed":null,"fuente":"DGT"},{"lat":38.9479,"lon":-6.267168,"maxspeed":null,"fuente":"DGT"},{"lat":38.882816,"lon":-3.8900084,"maxspeed":null,"fuente":"DGT"},{"lat":38.92679,"lon":-3.6221452,"maxspeed":null,"fuente":"DGT"},{"lat":38.99749,"lon":-4.233534,"maxspeed":null,"fuente":"DGT"},{"lat":39.45712,"lon":-6.4476805,"maxspeed":null,"fuente":"DGT"},{"lat":40.12725,"lon":-5.9125433,"maxspeed":null,"fuente":"DGT"},{"lat":39.797737,"lon":-6.368027,"maxspeed":null,"fuente":"DGT"},{"lat":40.022797,"lon":-3.034475,"maxspeed":null,"fuente":"DGT"},{"lat":39.916634,"lon":-3.0177295,"maxspeed":null,"fuente":"DGT"},{"lat":39.66443,"lon":-2.3739586,"maxspeed":null,"fuente":"DGT"},{"lat":40.4824,"lon":-3.856,"maxspeed":null,"fuente":"DGT"},{"lat":40.5369,"lon":-3.694645,"maxspeed":null,"fuente":"DGT"},{"lat":40.56056,"lon":-3.713396,"maxspeed":null,"fuente":"DGT"},{"lat":40.447235,"lon":-3.537841,"maxspeed":null,"fuente":"DGT"},{"lat":40.49051,"lon":-3.57226,"maxspeed":null,"fuente":"DGT"},{"lat":40.492947,"lon":-3.5628703,"maxspeed":null,"fuente":"DGT"},{"lat":40.524784,"lon":-3.648983,"maxspeed":null,"fuente":"DGT"},{"lat":40.345875,"lon":-3.543184,"maxspeed":null,"fuente":"DGT"},{"lat":39.816395,"lon":-2.4693055,"maxspeed":null,"fuente":"DGT"},{"lat":40.30226,"lon":-3.7388391,"maxspeed":null,"fuente":"DGT"},{"lat":40.308186,"lon":-3.691773,"maxspeed":null,"fuente":"DGT"},{"lat":40.627083,"lon":-3.1771953,"maxspeed":null,"fuente":"DGT"},{"lat":40.193897,"lon":-3.7962446,"maxspeed":null,"fuente":"DGT"},{"lat":40.49085,"lon":-3.738263,"maxspeed":null,"fuente":"DGT"},{"lat":40.31594,"lon":-3.692089,"maxspeed":null,"fuente":"DGT"},{"lat":40.5704,"lon":-3.5877724,"maxspeed":null,"fuente":"DGT"},{"lat":40.322216,"lon":-3.515807,"maxspeed":null,"fuente":"DGT"},{"lat":39.443493,"lon":-2.0243945,"maxspeed":null,"fuente":"DGT"},{"lat":39.418667,"lon":-2.209896,"maxspeed":null,"fuente":"DGT"},{"lat":39.73455,"lon":-1.9079518,"maxspeed":null,"fuente":"DGT"},{"lat":40.07263,"lon":-2.2691414,"maxspeed":null,"fuente":"DGT"},{"lat":40.46057,"lon":-3.756035,"maxspeed":null,"fuente":"DGT"},{"lat":40.95575,"lon":-2.67868,"maxspeed":null,"fuente":"DGT"},{"lat":40.36381,"lon":-3.700582,"maxspeed":null,"fuente":"DGT"},{"lat":40.58943,"lon":-3.5830321,"maxspeed":null,"fuente":"DGT"},{"lat":40.38705,"lon":-3.827072,"maxspeed":null,"fuente":"DGT"},{"lat":40.299965,"lon":-3.7699535,"maxspeed":null,"fuente":"DGT"},{"lat":40.35261,"lon":-3.634788,"maxspeed":null,"fuente":"DGT"},{"lat":40.66736,"lon":-3.3502293,"maxspeed":null,"fuente":"DGT"},{"lat":40.994392,"lon":-2.715055,"maxspeed":null,"fuente":"DGT"},{"lat":40.716175,"lon":-4.164247,"maxspeed":null,"fuente":"DGT"},{"lat":38.182243,"lon":-3.351051,"maxspeed":null,"fuente":"DGT"},{"lat":36.68407,"lon":-5.115301,"maxspeed":null,"fuente":"DGT"},{"lat":42.14813,"lon":0.22807,"maxspeed":null,"fuente":"DGT"},{"lat":42.441864,"lon":-7.7440057,"maxspeed":null,"fuente":"DGT"},{"lat":36.1445,"lon":-5.441,"maxspeed":null,"fuente":"DGT"},{"lat":36.14,"lon":-5.4412,"maxspeed":null,"fuente":"DGT"},{"lat":36.1365,"lon":-5.4409,"maxspeed":null,"fuente":"DGT"},{"lat":36.1264,"lon":-5.4423,"maxspeed":null,"fuente":"DGT"},{"lat":37.68211,"lon":-4.52027,"maxspeed":null,"fuente":"DGT"},{"lat":38.808735,"lon":-6.3731713,"maxspeed":null,"fuente":"DGT"},{"lat":39.045483,"lon":-4.0497665,"maxspeed":null,"fuente":"DGT"},{"lat":40.66989,"lon":-4.10751,"maxspeed":null,"fuente":"DGT"},{"lat":37.3292,"lon":-6.0279,"maxspeed":null,"fuente":"DGT"},{"lat":37.3481,"lon":-5.9382,"maxspeed":null,"fuente":"DGT"},{"lat":37.342,"lon":-5.9292,"maxspeed":null,"fuente":"DGT"},{"lat":37.3632,"lon":-6.0364,"maxspeed":null,"fuente":"DGT"},{"lat":36.897133,"lon":-2.416828,"maxspeed":null,"fuente":"DGT"},{"lat":37.356667,"lon":-2.348463,"maxspeed":null,"fuente":"DGT"},{"lat":36.766857,"lon":-2.847191,"maxspeed":null,"fuente":"DGT"},{"lat":36.74631,"lon":-3.306822,"maxspeed":null,"fuente":"DGT"},{"lat":37.24415,"lon":-3.645259,"maxspeed":null,"fuente":"DGT"},{"lat":37.203796,"lon":-3.627645,"maxspeed":null,"fuente":"DGT"},{"lat":37.134308,"lon":-3.608774,"maxspeed":null,"fuente":"DGT"},{"lat":37.154457,"lon":-3.496895,"maxspeed":null,"fuente":"DGT"},{"lat":36.69909,"lon":-3.476919,"maxspeed":null,"fuente":"DGT"},{"lat":41.5936,"lon":-4.5219,"maxspeed":null,"fuente":"DGT"},{"lat":41.4799,"lon":-4.6783,"maxspeed":null,"fuente":"DGT"},{"lat":37.232002,"lon":-3.608702,"maxspeed":null,"fuente":"DGT"},{"lat":36.694798,"lon":-4.561179,"maxspeed":null,"fuente":"DGT"},{"lat":36.87403,"lon":-5.049749,"maxspeed":null,"fuente":"DGT"},{"lat":36.73056,"lon":-4.367872,"maxspeed":null,"fuente":"DGT"},{"lat":36.501514,"lon":-4.947101,"maxspeed":null,"fuente":"DGT"},{"lat":36.724964,"lon":-4.255147,"maxspeed":null,"fuente":"DGT"},{"lat":36.939034,"lon":-4.439312,"maxspeed":null,"fuente":"DGT"},{"lat":36.729176,"lon":-4.454342,"maxspeed":null,"fuente":"DGT"},{"lat":37.04023,"lon":-4.49629,"maxspeed":null,"fuente":"DGT"},{"lat":36.7745,"lon":-4.740407,"maxspeed":null,"fuente":"DGT"},{"lat":36.56068,"lon":-4.862502,"maxspeed":null,"fuente":"DGT"},{"lat":36.850426,"lon":-4.143528,"maxspeed":null,"fuente":"DGT"},{"lat":38.008347,"lon":-3.429426,"maxspeed":null,"fuente":"DGT"},{"lat":37.918346,"lon":-3.049245,"maxspeed":null,"fuente":"DGT"},{"lat":37.76732,"lon":-3.970255,"maxspeed":null,"fuente":"DGT"},{"lat":37.79845,"lon":-3.758175,"maxspeed":null,"fuente":"DGT"},{"lat":37.77249,"lon":-3.739009,"maxspeed":null,"fuente":"DGT"},{"lat":38.025238,"lon":-3.77401,"maxspeed":null,"fuente":"DGT"},{"lat":37.75226,"lon":-3.798234,"maxspeed":null,"fuente":"DGT"},{"lat":37.43226,"lon":-3.895009,"maxspeed":null,"fuente":"DGT"},{"lat":36.862583,"lon":-2.255062,"maxspeed":null,"fuente":"DGT"},{"lat":36.892815,"lon":-2.423144,"maxspeed":null,"fuente":"DGT"},{"lat":37.15983,"lon":-3.637373,"maxspeed":null,"fuente":"DGT"},{"lat":40.9803,"lon":-4.5945,"maxspeed":null,"fuente":"DGT"},{"lat":41.3504,"lon":-4.5329,"maxspeed":null,"fuente":"DGT"},{"lat":40.3018,"lon":-4.6304,"maxspeed":null,"fuente":"DGT"},{"lat":40.932,"lon":-5.4631,"maxspeed":null,"fuente":"DGT"},{"lat":43.5153,"lon":-5.7298,"maxspeed":null,"fuente":"DGT"},{"lat":43.5286,"lon":-5.8289,"maxspeed":null,"fuente":"DGT"},{"lat":41.6338,"lon":-5.798,"maxspeed":null,"fuente":"DGT"},{"lat":42.0392,"lon":-6.9567,"maxspeed":null,"fuente":"DGT"},{"lat":40.9499,"lon":-5.7086,"maxspeed":null,"fuente":"DGT"},{"lat":41.7574,"lon":-2.6391,"maxspeed":null,"fuente":"DGT"},{"lat":41.6801,"lon":-2.1292,"maxspeed":null,"fuente":"DGT"},{"lat":42.5739,"lon":-5.6571,"maxspeed":null,"fuente":"DGT"},{"lat":42.5771,"lon":-5.6494,"maxspeed":null,"fuente":"DGT"},{"lat":42.3499,"lon":-4.6387,"maxspeed":null,"fuente":"DGT"},{"lat":42.9755,"lon":-3.5413,"maxspeed":null,"fuente":"DGT"},{"lat":42.4913,"lon":-3.3667,"maxspeed":null,"fuente":"DGT"},{"lat":42.7422,"lon":-4.1516,"maxspeed":null,"fuente":"DGT"},{"lat":43.0958,"lon":-3.4064,"maxspeed":null,"fuente":"DGT"},{"lat":40.6409,"lon":-4.7427,"maxspeed":null,"fuente":"DGT"},{"lat":42.4177,"lon":-3.2061,"maxspeed":null,"fuente":"DGT"},{"lat":41.4027,"lon":-3.6512,"maxspeed":null,"fuente":"DGT"},{"lat":40.683,"lon":-5.621,"maxspeed":null,"fuente":"DGT"},{"lat":40.7564,"lon":-5.6294,"maxspeed":null,"fuente":"DGT"},{"lat":41.1644,"lon":-5.4166,"maxspeed":null,"fuente":"DGT"},{"lat":42.5478,"lon":-5.6207,"maxspeed":null,"fuente":"DGT"},{"lat":41.9129,"lon":-5.5073,"maxspeed":null,"fuente":"DGT"},{"lat":42.033,"lon":-6.8269,"maxspeed":null,"fuente":"DGT"},{"lat":43.3226,"lon":-5.872,"maxspeed":null,"fuente":"DGT"},{"lat":43.4782,"lon":-5.7902,"maxspeed":null,"fuente":"DGT"},{"lat":43.3555,"lon":-5.8283,"maxspeed":null,"fuente":"DGT"},{"lat":43.4855,"lon":-5.7896,"maxspeed":null,"fuente":"DGT"},{"lat":43.5543,"lon":-5.9429,"maxspeed":null,"fuente":"DGT"},{"lat":43.330044,"lon":-8.395173,"maxspeed":null,"fuente":"DGT"},{"lat":43.334854,"lon":-8.45364,"maxspeed":null,"fuente":"DGT"},{"lat":43.5542,"lon":-5.9428,"maxspeed":null,"fuente":"DGT"},{"lat":43.3615,"lon":-7.4551,"maxspeed":null,"fuente":"DGT"},{"lat":43.2956,"lon":-7.6981,"maxspeed":null,"fuente":"DGT"},{"lat":43.2812,"lon":-7.69916,"maxspeed":null,"fuente":"DGT"},{"lat":41.8441,"lon":-2.4528,"maxspeed":null,"fuente":"DGT"},{"lat":42.5482,"lon":-5.6217,"maxspeed":null,"fuente":"DGT"},{"lat":42.57083,"lon":-8.741388,"maxspeed":null,"fuente":"DGT"},{"lat":43.0976,"lon":-3.276,"maxspeed":null,"fuente":"DGT"},{"lat":39.522423,"lon":2.5087774,"maxspeed":null,"fuente":"DGT"},{"lat":38.96439,"lon":1.385242,"maxspeed":null,"fuente":"DGT"},{"lat":39.98785,"lon":4.089333,"maxspeed":null,"fuente":"DGT"},{"lat":39.58666,"lon":3.247777,"maxspeed":null,"fuente":"DGT"},{"lat":39.489723,"lon":3.160277,"maxspeed":null,"fuente":"DGT"},{"lat":38.941387,"lon":1.290447,"maxspeed":null,"fuente":"DGT"},{"lat":39.936527,"lon":4.121867,"maxspeed":null,"fuente":"DGT"},{"lat":39.936707,"lon":4.122092,"maxspeed":null,"fuente":"DGT"},{"lat":39.547222,"lon":2.451111,"maxspeed":null,"fuente":"DGT"},{"lat":41.8515,"lon":-4.5567,"maxspeed":null,"fuente":"DGT"},{"lat":41.51218,"lon":-0.47553,"maxspeed":null,"fuente":"DGT"},{"lat":41.59391,"lon":-0.67215,"maxspeed":null,"fuente":"DGT"},{"lat":41.60632,"lon":-0.69126,"maxspeed":null,"fuente":"DGT"},{"lat":41.96079,"lon":-7.51548,"maxspeed":null,"fuente":"DGT"},{"lat":42.41156,"lon":-7.035189,"maxspeed":null,"fuente":"DGT"},{"lat":42.28441,"lon":-7.858057,"maxspeed":null,"fuente":"DGT"},{"lat":42.21152,"lon":-8.662396,"maxspeed":null,"fuente":"DGT"},{"lat":42.198895,"lon":-8.656586,"maxspeed":null,"fuente":"DGT"},{"lat":42.186913,"lon":-8.637469,"maxspeed":null,"fuente":"DGT"},{"lat":42.253056,"lon":-8.684468,"maxspeed":null,"fuente":"DGT"},{"lat":42.66848,"lon":-8.63594,"maxspeed":null,"fuente":"DGT"},{"lat":28.6537,"lon":-17.8522,"maxspeed":null,"fuente":"DGT"},{"lat":28.4762,"lon":-16.3072,"maxspeed":null,"fuente":"DGT"},{"lat":28.4791,"lon":-16.3078,"maxspeed":null,"fuente":"DGT"},{"lat":28.491,"lon":-16.3745,"maxspeed":null,"fuente":"DGT"},{"lat":28.058,"lon":-16.5833,"maxspeed":null,"fuente":"DGT"},{"lat":28.3823,"lon":-16.3628,"maxspeed":null,"fuente":"DGT"},{"lat":27.7702,"lon":-15.6746,"maxspeed":null,"fuente":"DGT"},{"lat":27.775,"lon":-15.5503,"maxspeed":null,"fuente":"DGT"},{"lat":28.4745,"lon":-13.8685,"maxspeed":null,"fuente":"DGT"},{"lat":28.4808,"lon":-13.8688,"maxspeed":null,"fuente":"DGT"},{"lat":27.9516,"lon":-15.3875,"maxspeed":null,"fuente":"DGT"},{"lat":27.9491,"lon":-15.3871,"maxspeed":null,"fuente":"DGT"},{"lat":28.0637,"lon":-15.4377,"maxspeed":null,"fuente":"DGT"},{"lat":28.0473,"lon":-15.4239,"maxspeed":null,"fuente":"DGT"},{"lat":28.0312,"lon":-15.4009,"maxspeed":null,"fuente":"DGT"},{"lat":28.9578,"lon":-13.5785,"maxspeed":null,"fuente":"DGT"},{"lat":28.9581,"lon":-13.5787,"maxspeed":null,"fuente":"DGT"},{"lat":43.0167,"lon":-7.583,"maxspeed":null,"fuente":"DGT"},{"lat":42.6392,"lon":-3.1034,"maxspeed":null,"fuente":"DGT"},{"lat":41.5025,"lon":-3.7097,"maxspeed":null,"fuente":"DGT"},{"lat":42.0061,"lon":-5.6608,"maxspeed":null,"fuente":"DGT"},{"lat":42.071,"lon":-4.2175,"maxspeed":null,"fuente":"DGT"},{"lat":41.7166,"lon":-4.6978,"maxspeed":null,"fuente":"DGT"},{"lat":43.4242,"lon":-3.835,"maxspeed":null,"fuente":"DGT"},{"lat":43.4206,"lon":-3.8376,"maxspeed":null,"fuente":"DGT"},{"lat":43.4124,"lon":-3.9736,"maxspeed":null,"fuente":"DGT"},{"lat":43.5182,"lon":-5.7195,"maxspeed":null,"fuente":"DGT"},{"lat":42.0229,"lon":-5.8453,"maxspeed":null,"fuente":"DGT"},{"lat":40.9419,"lon":-5.6607,"maxspeed":null,"fuente":"DGT"},{"lat":41.9924,"lon":-4.5033,"maxspeed":null,"fuente":"DGT"},{"lat":40.7468,"lon":-4.2813,"maxspeed":null,"fuente":"DGT"},{"lat":41.5947,"lon":-4.7227,"maxspeed":null,"fuente":"DGT"},{"lat":41.0945,"lon":-2.4489,"maxspeed":null,"fuente":"DGT"},{"lat":41.1733,"lon":-2.4109,"maxspeed":null,"fuente":"DGT"},{"lat":40.9489,"lon":-4.6006,"maxspeed":null,"fuente":"DGT"},{"lat":43.3781,"lon":-4.0367,"maxspeed":null,"fuente":"DGT"},{"lat":43.4285,"lon":-3.9306,"maxspeed":null,"fuente":"DGT"},{"lat":43.3538,"lon":-3.2012,"maxspeed":null,"fuente":"DGT"},{"lat":43.3946,"lon":-3.4433,"maxspeed":null,"fuente":"DGT"},{"lat":42.0209,"lon":-6.3579,"maxspeed":null,"fuente":"DGT"},{"lat":42.0737,"lon":-5.6969,"maxspeed":null,"fuente":"DGT"},{"lat":42.4466,"lon":-6.0777,"maxspeed":null,"fuente":"DGT"},{"lat":42.5798,"lon":-6.2152,"maxspeed":null,"fuente":"DGT"},{"lat":41.9882,"lon":-4.4238,"maxspeed":null,"fuente":"DGT"},{"lat":40.9424,"lon":-4.5858,"maxspeed":null,"fuente":"DGT"},{"lat":42.5514,"lon":-6.1788,"maxspeed":null,"fuente":"DGT"},{"lat":42.4334,"lon":-5.5859,"maxspeed":null,"fuente":"DGT"},{"lat":41.9815,"lon":-4.5314,"maxspeed":null,"fuente":"DGT"},{"lat":43.4723,"lon":-6.1112,"maxspeed":null,"fuente":"DGT"},{"lat":43.0267,"lon":-3.5044,"maxspeed":null,"fuente":"DGT"},{"lat":43.5292,"lon":-5.6861,"maxspeed":null,"fuente":"DGT"},{"lat":42.5881,"lon":-5.6229,"maxspeed":null,"fuente":"DGT"},{"lat":41.6371,"lon":-4.7024,"maxspeed":null,"fuente":"DGT"},{"lat":41.4971,"lon":-5.0218,"maxspeed":null,"fuente":"DGT"},{"lat":42.3258,"lon":-3.6829,"maxspeed":null,"fuente":"DGT"},{"lat":41.4108,"lon":-4.9639,"maxspeed":null,"fuente":"DGT"},{"lat":41.9669,"lon":-3.7767,"maxspeed":null,"fuente":"DGT"},{"lat":41.6058,"lon":-4.8084,"maxspeed":null,"fuente":"DGT"},{"lat":42.3048,"lon":-3.7024,"maxspeed":null,"fuente":"DGT"},{"lat":41.003,"lon":-5.6121,"maxspeed":null,"fuente":"DGT"},{"lat":40.7439,"lon":-4.2966,"maxspeed":null,"fuente":"DGT"},{"lat":40.8578,"lon":-4.2454,"maxspeed":null,"fuente":"DGT"},{"lat":40.5867,"lon":-4.4153,"maxspeed":null,"fuente":"DGT"},{"lat":39.43353,"lon":-0.8206354,"maxspeed":null,"fuente":"DGT"},{"lat":42.5813,"lon":-5.6735,"maxspeed":null,"fuente":"DGT"},{"lat":43.5259,"lon":-5.8253,"maxspeed":null,"fuente":"DGT"},{"lat":39.46055,"lon":-0.5525691,"maxspeed":null,"fuente":"DGT"},{"lat":39.461094,"lon":-0.552675,"maxspeed":null,"fuente":"DGT"},{"lat":43.0995,"lon":-5.8192,"maxspeed":null,"fuente":"DGT"},{"lat":39.52511,"lon":-0.4704202,"maxspeed":null,"fuente":"DGT"},{"lat":41.0018,"lon":-5.6146,"maxspeed":null,"fuente":"DGT"},{"lat":38.98455,"lon":-0.5961309,"maxspeed":null,"fuente":"DGT"},{"lat":41.6451,"lon":-3.6344,"maxspeed":null,"fuente":"DGT"},{"lat":39.46668,"lon":-0.4219139,"maxspeed":null,"fuente":"DGT"},{"lat":39.110023,"lon":-0.3901556,"maxspeed":null,"fuente":"DGT"},{"lat":38.89394,"lon":-0.4852073,"maxspeed":null,"fuente":"DGT"},{"lat":39.530003,"lon":-0.443857,"maxspeed":null,"fuente":"DGT"},{"lat":39.557583,"lon":-0.4922942,"maxspeed":null,"fuente":"DGT"},{"lat":39.623596,"lon":-0.4374779,"maxspeed":null,"fuente":"DGT"},{"lat":39.64948,"lon":-0.3011253,"maxspeed":null,"fuente":"DGT"},{"lat":39.377285,"lon":-0.40596944,"maxspeed":null,"fuente":"DGT"},{"lat":39.412556,"lon":-0.5015731,"maxspeed":null,"fuente":"DGT"},{"lat":38.931084,"lon":-0.5734544,"maxspeed":null,"fuente":"DGT"},{"lat":38.80352,"lon":-0.6113976,"maxspeed":null,"fuente":"DGT"},{"lat":38.78386,"lon":-0.8912472,"maxspeed":null,"fuente":"DGT"},{"lat":39.376846,"lon":-0.4641443,"maxspeed":null,"fuente":"DGT"},{"lat":39.36227,"lon":-0.4464406,"maxspeed":null,"fuente":"DGT"},{"lat":38.722477,"lon":-0.9343611,"maxspeed":null,"fuente":"DGT"},{"lat":38.306118,"lon":-0.588334,"maxspeed":null,"fuente":"DGT"},{"lat":38.333973,"lon":-0.5523818,"maxspeed":null,"fuente":"DGT"},{"lat":38.26088,"lon":-0.7558513,"maxspeed":null,"fuente":"DGT"},{"lat":38.5271,"lon":-0.2018222,"maxspeed":null,"fuente":"DGT"},{"lat":38.154068,"lon":-0.9113593,"maxspeed":null,"fuente":"DGT"},{"lat":38.099827,"lon":-0.9383022,"maxspeed":null,"fuente":"DGT"},{"lat":38.563366,"lon":-0.0962181,"maxspeed":null,"fuente":"DGT"},{"lat":38.68718,"lon":0.0402877,"maxspeed":null,"fuente":"DGT"},{"lat":38.413906,"lon":-0.4326693,"maxspeed":null,"fuente":"DGT"},{"lat":38.08749,"lon":-0.659587,"maxspeed":null,"fuente":"DGT"},{"lat":38.098408,"lon":-0.762332,"maxspeed":null,"fuente":"DGT"},{"lat":38.09497,"lon":-0.7221674,"maxspeed":null,"fuente":"DGT"},{"lat":38.870167,"lon":-0.0267536,"maxspeed":null,"fuente":"DGT"},{"lat":38.8701,"lon":-0.0266195,"maxspeed":null,"fuente":"DGT"},{"lat":38.77535,"lon":0.1424691,"maxspeed":null,"fuente":"DGT"},{"lat":38.45945,"lon":-0.575785,"maxspeed":null,"fuente":"DGT"},{"lat":38.195038,"lon":-0.5843704,"maxspeed":null,"fuente":"DGT"},{"lat":38.4394,"lon":-0.856491,"maxspeed":null,"fuente":"DGT"},{"lat":40.221012,"lon":0.19163612,"maxspeed":null,"fuente":"DGT"},{"lat":40.220947,"lon":0.1914751,"maxspeed":null,"fuente":"DGT"},{"lat":40.469707,"lon":0.4167199,"maxspeed":null,"fuente":"DGT"},{"lat":40.348736,"lon":0.2934848,"maxspeed":null,"fuente":"DGT"},{"lat":40.233753,"lon":0.2126827,"maxspeed":null,"fuente":"DGT"},{"lat":40.161537,"lon":0.16333611,"maxspeed":null,"fuente":"DGT"},{"lat":39.951572,"lon":-0.1294247,"maxspeed":null,"fuente":"DGT"},{"lat":40.066032,"lon":-0.0348524,"maxspeed":null,"fuente":"DGT"},{"lat":39.870495,"lon":-0.1238888,"maxspeed":null,"fuente":"DGT"},{"lat":39.88469,"lon":-0.1312859,"maxspeed":null,"fuente":"DGT"},{"lat":39.79193,"lon":-0.4000336,"maxspeed":null,"fuente":"DGT"},{"lat":38.176327,"lon":-1.3138161,"maxspeed":null,"fuente":"DGT"},{"lat":38.023544,"lon":-1.1647367,"maxspeed":null,"fuente":"DGT"},{"lat":38.053963,"lon":-1.1177311,"maxspeed":null,"fuente":"DGT"},{"lat":37.529324,"lon":-1.6284083,"maxspeed":null,"fuente":"DGT"},{"lat":38.01558,"lon":-1.3796028,"maxspeed":null,"fuente":"DGT"},{"lat":37.626434,"lon":-0.72285557,"maxspeed":null,"fuente":"DGT"},{"lat":37.56638,"lon":-1.6505028,"maxspeed":null,"fuente":"DGT"},{"lat":38.407654,"lon":-1.3947583,"maxspeed":null,"fuente":"DGT"},{"lat":37.944424,"lon":-1.1596597,"maxspeed":null,"fuente":"DGT"},{"lat":37.69462,"lon":-1.0199884,"maxspeed":null,"fuente":"DGT"},{"lat":37.706135,"lon":-1.0820472,"maxspeed":null,"fuente":"DGT"},{"lat":38.879765,"lon":-1.204062,"maxspeed":null,"fuente":"DGT"},{"lat":38.8822,"lon":-2.1394136,"maxspeed":null,"fuente":"DGT"},{"lat":38.59557,"lon":-1.6733084,"maxspeed":null,"fuente":"DGT"},{"lat":38.84579,"lon":-2.2300224,"maxspeed":null,"fuente":"DGT"},{"lat":39.144005,"lon":-2.0499437,"maxspeed":null,"fuente":"DGT"},{"lat":39.233303,"lon":-2.6594057,"maxspeed":null,"fuente":"DGT"},{"lat":39.04394,"lon":-2.213175,"maxspeed":null,"fuente":"DGT"},{"lat":40.4084,"lon":-4.4881,"maxspeed":null,"fuente":"DGT"},{"lat":39.6343,"lon":2.7485347,"maxspeed":null,"fuente":"DGT"},{"lat":39.664623,"lon":2.8164375,"maxspeed":null,"fuente":"DGT"},{"lat":39.521133,"lon":2.5037777,"maxspeed":null,"fuente":"DGT"},{"lat":39.53676,"lon":2.728607,"maxspeed":null,"fuente":"DGT"},{"lat":38.9643,"lon":1.386659,"maxspeed":null,"fuente":"DGT"},{"lat":39.9825,"lon":4.09472,"maxspeed":null,"fuente":"DGT"},{"lat":39.779167,"lon":3.1325,"maxspeed":null,"fuente":"DGT"},{"lat":39.56111,"lon":3.258055,"maxspeed":null,"fuente":"DGT"},{"lat":39.45666,"lon":2.94666,"maxspeed":null,"fuente":"DGT"},{"lat":39.8625,"lon":3.021666,"maxspeed":null,"fuente":"DGT"},{"lat":38.957355,"lon":1.446823,"maxspeed":null,"fuente":"DGT"},{"lat":39.837074,"lon":3.0730672,"maxspeed":null,"fuente":"DGT"},{"lat":38.518612,"lon":-3.490556,"maxspeed":null,"fuente":"DGT"},{"lat":39.06598,"lon":-3.920293,"maxspeed":null,"fuente":"DGT"},{"lat":40.612778,"lon":-3.207222,"maxspeed":null,"fuente":"DGT"},{"lat":39.986393,"lon":-3.964661,"maxspeed":null,"fuente":"DGT"},{"lat":39.986393,"lon":-3.8646607,"maxspeed":null,"fuente":"DGT"},{"lat":37.77638,"lon":-4.82143,"maxspeed":null,"fuente":"DGT"},{"lat":38.4058,"lon":-3.4981,"maxspeed":null,"fuente":"DGT"},{"lat":43.4265,"lon":-3.9332,"maxspeed":null,"fuente":"DGT"},{"lat":41.7631,"lon":-2.3332,"maxspeed":null,"fuente":"DGT"},{"lat":43.5104,"lon":-5.5771,"maxspeed":null,"fuente":"DGT"},{"lat":43.5038,"lon":-5.5909,"maxspeed":null,"fuente":"DGT"},{"lat":43.4952,"lon":-5.5332,"maxspeed":null,"fuente":"DGT"},{"lat":43.487,"lon":-5.4434,"maxspeed":null,"fuente":"DGT"},{"lat":43.4629,"lon":-5.5104,"maxspeed":null,"fuente":"DGT"},{"lat":42.6309,"lon":-3.1101,"maxspeed":null,"fuente":"DGT"},{"lat":43.4879,"lon":-5.4304,"maxspeed":null,"fuente":"DGT"},{"lat":42.6289,"lon":-3.1258,"maxspeed":null,"fuente":"DGT"},{"lat":43.4159,"lon":-5.5541,"maxspeed":null,"fuente":"DGT"},{"lat":43.4326,"lon":-5.5388,"maxspeed":null,"fuente":"DGT"},{"lat":38.11197,"lon":-1.2394468,"maxspeed":null,"fuente":"DGT"},{"lat":38.877346,"lon":-1.324095,"maxspeed":null,"fuente":"DGT"},{"lat":40.492523,"lon":-3.868161,"maxspeed":null,"fuente":"DGT"},{"lat":40.448055,"lon":-3.528055,"maxspeed":null,"fuente":"DGT"},{"lat":40.30383,"lon":-3.91419,"maxspeed":null,"fuente":"DGT"},{"lat":36.201523,"lon":-5.3835855,"maxspeed":null,"fuente":"DGT"},{"lat":36.156044,"lon":-5.4515004,"maxspeed":null,"fuente":"DGT"},{"lat":40.357838,"lon":-3.8182993,"maxspeed":null,"fuente":"DGT"},{"lat":43.3593,"lon":-3.1947,"maxspeed":null,"fuente":"DGT"},{"lat":42.38688,"lon":-7.851026,"maxspeed":null,"fuente":"DGT"},{"lat":42.91916,"lon":-8.491937,"maxspeed":null,"fuente":"DGT"},{"lat":43.32336,"lon":-8.341174,"maxspeed":null,"fuente":"DGT"},{"lat":39.548107,"lon":-1.5116957,"maxspeed":null,"fuente":"DGT"},{"lat":38.415024,"lon":-0.4309649,"maxspeed":null,"fuente":"DGT"},{"lat":38.415024,"lon":-0.4489038,"maxspeed":null,"fuente":"DGT"},{"lat":38.402733,"lon":-0.4486261,"maxspeed":null,"fuente":"DGT"},{"lat":40.101208,"lon":-3.6375859,"maxspeed":null,"fuente":"DGT"},{"lat":42.5764,"lon":-6.5323,"maxspeed":null,"fuente":"DGT"},{"lat":42.57533,"lon":-6.71141,"maxspeed":null,"fuente":"DGT"},{"lat":42.687656,"lon":-6.98945,"maxspeed":null,"fuente":"DGT"},{"lat":40.70639,"lon":-4.1275,"maxspeed":null,"fuente":"DGT"},{"lat":40.711277,"lon":-4.13475,"maxspeed":null,"fuente":"DGT"},{"lat":40.705055,"lon":-4.1456943,"maxspeed":null,"fuente":"DGT"},{"lat":40.709057,"lon":-4.159167,"maxspeed":null,"fuente":"DGT"},{"lat":39.867767,"lon":-4.00269,"maxspeed":null,"fuente":"DGT"},{"lat":41.6815,"lon":-4.7437,"maxspeed":null,"fuente":"DGT"},{"lat":42.62904,"lon":-2.8563,"maxspeed":null,"fuente":"DGT"},{"lat":39.325966,"lon":-3.4784334,"maxspeed":null,"fuente":"DGT"},{"lat":42.3255,"lon":-5.0220346,"maxspeed":null,"fuente":"DGT"},{"lat":42.240463,"lon":-4.928208,"maxspeed":null,"fuente":"DGT"},{"lat":42.621925,"lon":-4.7706842,"maxspeed":null,"fuente":"DGT"},{"lat":42.671417,"lon":-4.79721,"maxspeed":null,"fuente":"DGT"},{"lat":41.049576,"lon":-2.4469757,"maxspeed":null,"fuente":"DGT"},{"lat":39.91003,"lon":-3.4757912,"maxspeed":null,"fuente":"DGT"},{"lat":39.669193,"lon":-3.5105402,"maxspeed":null,"fuente":"DGT"},{"lat":38.968956,"lon":-3.382666,"maxspeed":null,"fuente":"DGT"},{"lat":38.5075,"lon":-3.497222,"maxspeed":null,"fuente":"DGT"},{"lat":39.887016,"lon":-5.524129,"maxspeed":null,"fuente":"DGT"},{"lat":39.87221,"lon":-5.571398,"maxspeed":null,"fuente":"DGT"},{"lat":38.84759,"lon":-6.6168556,"maxspeed":null,"fuente":"DGT"},{"lat":38.860287,"lon":-6.7481256,"maxspeed":null,"fuente":"DGT"},{"lat":37.15784,"lon":-3.523661,"maxspeed":null,"fuente":"DGT"},{"lat":36.54829,"lon":-4.673769,"maxspeed":null,"fuente":"DGT"},{"lat":36.8353,"lon":-2.931927,"maxspeed":null,"fuente":"DGT"},{"lat":36.91743,"lon":-2.156503,"maxspeed":null,"fuente":"DGT"},{"lat":40.27605,"lon":-3.7855327,"maxspeed":null,"fuente":"DGT"},{"lat":40.24088,"lon":-3.744091,"maxspeed":null,"fuente":"DGT"},{"lat":40.471127,"lon":-3.4117606,"maxspeed":null,"fuente":"DGT"},{"lat":40.188496,"lon":-3.763806,"maxspeed":null,"fuente":"DGT"},{"lat":40.47266,"lon":-3.3906107,"maxspeed":null,"fuente":"DGT"},{"lat":40.365585,"lon":-3.6622005,"maxspeed":null,"fuente":"DGT"},{"lat":43.640232,"lon":-7.928395,"maxspeed":null,"fuente":"DGT"},{"lat":43.16689,"lon":-8.18328,"maxspeed":null,"fuente":"DGT"},{"lat":42.834892,"lon":-8.737821,"maxspeed":null,"fuente":"DGT"},{"lat":43.430836,"lon":-7.756466,"maxspeed":null,"fuente":"DGT"},{"lat":42.685314,"lon":-7.462608,"maxspeed":null,"fuente":"DGT"},{"lat":42.471092,"lon":-8.027691,"maxspeed":null,"fuente":"DGT"},{"lat":42.425446,"lon":-8.104748,"maxspeed":null,"fuente":"DGT"},{"lat":42.178757,"lon":-8.531927,"maxspeed":null,"fuente":"DGT"},{"lat":42.046402,"lon":-8.883522,"maxspeed":null,"fuente":"DGT"},{"lat":42.3732,"lon":-8.688434,"maxspeed":null,"fuente":"DGT"},{"lat":43.140835,"lon":-8.687778,"maxspeed":null,"fuente":"DGT"},{"lat":38.9371,"lon":1.4535176,"maxspeed":null,"fuente":"DGT"},{"lat":38.898567,"lon":1.3304498,"maxspeed":null,"fuente":"DGT"},{"lat":38.967697,"lon":1.311524,"maxspeed":null,"fuente":"DGT"},{"lat":38.99604,"lon":1.5436347,"maxspeed":null,"fuente":"DGT"},{"lat":38.937588,"lon":1.453971,"maxspeed":null,"fuente":"DGT"},{"lat":38.89838,"lon":1.330546,"maxspeed":null,"fuente":"DGT"},{"lat":38.9706,"lon":1.318211,"maxspeed":null,"fuente":"DGT"},{"lat":38.996235,"lon":1.543833,"maxspeed":null,"fuente":"DGT"},{"lat":40.582123,"lon":-3.085497,"maxspeed":null,"fuente":"DGT"},{"lat":40.572453,"lon":-3.053419,"maxspeed":null,"fuente":"DGT"},{"lat":40.633007,"lon":-3.287619,"maxspeed":null,"fuente":"DGT"},{"lat":40.634655,"lon":-3.312912,"maxspeed":null,"fuente":"DGT"},{"lat":43.01334,"lon":-1.6364053,"maxspeed":null,"fuente":"DGT"},{"lat":37.628506,"lon":-6.1778893,"maxspeed":null,"fuente":"DGT"},{"lat":38.81192,"lon":-6.893261,"maxspeed":null,"fuente":"DGT"},{"lat":42.512653,"lon":-8.642779,"maxspeed":null,"fuente":"DGT"},{"lat":38.12083,"lon":-3.760176,"maxspeed":null,"fuente":"DGT"},{"lat":38.05522,"lon":-3.894923,"maxspeed":null,"fuente":"DGT"},{"lat":38.123535,"lon":-3.757807,"maxspeed":null,"fuente":"DGT"},{"lat":37.121742,"lon":-3.757807,"maxspeed":null,"fuente":"DGT"},{"lat":37.156483,"lon":-3.581305,"maxspeed":null,"fuente":"DGT"},{"lat":43.25122,"lon":-1.67496,"maxspeed":null,"fuente":"DGT"},{"lat":41.686302,"lon":-0.9542074,"maxspeed":null,"fuente":"DGT"},{"lat":41.699417,"lon":-1.0083303,"maxspeed":null,"fuente":"DGT"},{"lat":41.69702,"lon":-0.9834585,"maxspeed":null,"fuente":"DGT"},{"lat":41.762596,"lon":-1.122981,"maxspeed":null,"fuente":"DGT"},{"lat":41.729244,"lon":-1.0482498,"maxspeed":null,"fuente":"DGT"},{"lat":42.405365,"lon":0.16405146,"maxspeed":null,"fuente":"DGT"},{"lat":40.681843,"lon":-0.95598197,"maxspeed":null,"fuente":"DGT"},{"lat":42.9758,"lon":-3.4811,"maxspeed":null,"fuente":"DGT"},{"lat":43.007,"lon":-3.858,"maxspeed":null,"fuente":"DGT"},{"lat":43.4115,"lon":-5.8058,"maxspeed":null,"fuente":"DGT"},{"lat":43.3651,"lon":-3.2191,"maxspeed":null,"fuente":"DGT"},{"lat":36.75552,"lon":-3.93543,"maxspeed":null,"fuente":"DGT"},{"lat":36.755863,"lon":-3.922664,"maxspeed":null,"fuente":"DGT"},{"lat":41.663494,"lon":-0.98259586,"maxspeed":null,"fuente":"DGT"},{"lat":41.661972,"lon":-0.9579466,"maxspeed":null,"fuente":"DGT"},{"lat":38.383167,"lon":-0.5189798,"maxspeed":null,"fuente":"DGT"},{"lat":40.2604,"lon":-0.0778247,"maxspeed":null,"fuente":"DGT"},{"lat":40.382904,"lon":0.383662,"maxspeed":null,"fuente":"DGT"},{"lat":40.012558,"lon":-0.0286221,"maxspeed":null,"fuente":"DGT"},{"lat":39.504475,"lon":-0.414855,"maxspeed":null,"fuente":"DGT"},{"lat":39.466675,"lon":-0.4761389,"maxspeed":null,"fuente":"DGT"},{"lat":39.309383,"lon":-0.2995381,"maxspeed":null,"fuente":"DGT"},{"lat":39.35371,"lon":-0.324827,"maxspeed":null,"fuente":"DGT"},{"lat":38.877384,"lon":-0.3905411,"maxspeed":null,"fuente":"DGT"},{"lat":38.8978,"lon":-0.3292315,"maxspeed":null,"fuente":"DGT"},{"lat":38.28626,"lon":-0.6665085,"maxspeed":null,"fuente":"DGT"},{"lat":38.016388,"lon":-0.699167,"maxspeed":null,"fuente":"DGT"},{"lat":39.769657,"lon":-0.3404559,"maxspeed":null,"fuente":"DGT"},{"lat":39.097126,"lon":-1.8001007,"maxspeed":null,"fuente":"DGT"},{"lat":38.208237,"lon":-0.5581056,"maxspeed":null,"fuente":"DGT"},{"lat":37.975697,"lon":-0.69714,"maxspeed":null,"fuente":"DGT"},{"lat":39.514683,"lon":-0.4326693,"maxspeed":null,"fuente":"DGT"},{"lat":39.38195,"lon":-0.3995047,"maxspeed":null,"fuente":"DGT"}];
+
+  // ---------- state ----------
+  var watchId = null;
+  var lastPos = null;
+  var lastHeading = null;
+  var cameras = [];              // {lat, lon, maxspeed}
+  var camerasLoaded = false;
+  var announced = {};            // key -> Set of thresholds already spoken
+  var muted = false;
+  var running = false;
+  var lastActiveKey = null, lastActiveWasClose = false; // para el aviso "radar superado"
+  var speedOverActive = false, lastSpeedAlertAt = 0;     // para el aviso de exceso de velocidad
+
+  // ---------- dom ----------
+  var $ = function(id){ return document.getElementById(id); };
+  var gpsDot = $("gps-dot"), gpsLabel = $("gps-label"), speedEl = $("speed");
+  var hero = $("hero"), idleMsg = $("idle-msg"), liveReadout = $("live-readout");
+  var distEl = $("distance"), distUnit = $("distance-unit"), detailEl = $("radar-detail");
+  var iconEl = $("radar-icon"), upcomingEl = $("upcoming");
+  var ringWrap = $("ring-wrap"), ringProgress = $("ring-progress");
+  var btnStart = $("btn-start"), btnStop = $("btn-stop"), btnMute = $("btn-mute");
+  var btnMark = $("btn-mark"), toastEl = $("toast"), limitInput = $("limit-input");
+  var importLink = $("import-link"), importFile = $("import-file"), importStatus = $("import-status");
+
+  // ---------- geo helpers ----------
+  function toRad(d){ return d * Math.PI / 180; }
+  function haversine(lat1, lon1, lat2, lon2){
+    var R = 6371000;
+    var dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+    var a = Math.sin(dLat/2)*Math.sin(dLat/2) +
+            Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)*Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+  function bearing(lat1, lon1, lat2, lon2){
+    var y = Math.sin(toRad(lon2-lon1)) * Math.cos(toRad(lat2));
+    var x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) -
+            Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lon2-lon1));
+    return (toRad(0) + Math.atan2(y, x)) * 180 / Math.PI;
+  }
+  function angleDiff(a, b){
+    var d = Math.abs(a - b) % 360;
+    return d > 180 ? 360 - d : d;
+  }
+
+  // ---------- speech ----------
+  function speak(text){
+    if (muted || !('speechSynthesis' in window)) return;
+    try {
+      var u = new SpeechSynthesisUtterance(text);
+      u.lang = 'es-ES';
+      u.rate = 1.0;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch(e) {}
+  }
+
+  // aviso de radar con tono que escala según la cercanía (idx 0=lejos … último=muy cerca)
+  function speakRadarAlert(idx, threshold, camera){
+    var spdText = camera.maxspeed ? (", límite " + camera.maxspeed + " kilómetros por hora") : "";
+    var distText = threshold >= 1000 ? (threshold/1000) + " kilómetros" : threshold + " metros";
+    var esUltimo = idx === ANNOUNCE_AT.length - 1;
+    var esPrimero = idx === 0;
+    var frase;
+    if (esUltimo) {
+      frase = "Radar ahora mismo" + spdText + ". Reduce la velocidad.";
+    } else if (esPrimero) {
+      frase = "Radar en " + distText + spdText + ".";
+    } else {
+      frase = "Atención, radar en " + distText + spdText + ".";
+    }
+    speak(frase);
+  }
+
+  // ---------- carga de datos (embebidos + importados por ti + tus propios marcados) ----------
+  function loadLocalCameras(){
+    var embebidos = EMBEDDED_RADARES || [];
+    var importados = loadOfficialImported();
+
+    // combina y elimina duplicados por si un mismo punto está en ambas fuentes
+    var vistos = {};
+    var oficiales = [];
+    embebidos.concat(importados).forEach(function(c){
+      var key = c.lat.toFixed(5) + "," + c.lon.toFixed(5);
+      if (vistos[key]) return;
+      vistos[key] = true;
+      oficiales.push(c);
+    });
+
+    cameras = oficiales;
+    camerasLoaded = true;
+    mergeMarksIntoCameras();
+
+    var propios = loadMarks().length;
+    setGpsLabel(oficiales.length + " radares oficiales · " + propios + " tuyos");
+  }
+
+  // ---------- tus radares marcados (persisten en este dispositivo/navegador) ----------
+  var MARKS_KEY = "radares_propios_v1";
+
+  function makeId(){ return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+  function loadMarks(){
+    try {
+      var raw = localStorage.getItem(MARKS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch(e) { return []; }
+  }
+  function saveMarks(marks){
+    try { localStorage.setItem(MARKS_KEY, JSON.stringify(marks)); } catch(e) {}
+  }
+  function mergeMarksIntoCameras(){
+    var marks = loadMarks();
+    marks.forEach(function(m){ m.propio = true; });
+    // evita duplicar si loadLocalCameras() se llama más de una vez
+    cameras = cameras.filter(function(c){ return !c.propio; }).concat(marks);
+  }
+
+  function toast(msg, ms){
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function(){ toastEl.classList.remove("show"); }, ms || 2200);
+  }
+
+  function markRadarHere(){
+    if (!lastPos) {
+      toast("Esperando señal GPS…");
+      return;
+    }
+    var lat = lastPos.coords.latitude, lon = lastPos.coords.longitude;
+    var maxspeed = limitInput.value ? parseInt(limitInput.value, 10) : null;
+
+    // evita marcar dos veces el mismo radar si ya hay uno muy cerca (< 120 m)
+    var yaExiste = cameras.some(function(c){ return haversine(lat, lon, c.lat, c.lon) < 120; });
+    if (yaExiste) {
+      toast("Ya hay un radar marcado muy cerca de aquí");
+      return;
+    }
+
+    var nuevo = { id: makeId(), tipo: "fijo", lat: lat, lon: lon, maxspeed: maxspeed, propio: true, fecha: new Date().toISOString() };
+    var marks = loadMarks();
+    marks.push(nuevo);
+    saveMarks(marks);
+    cameras.push(nuevo);
+
+    toast("📍 Radar marcado" + (maxspeed ? " — límite " + maxspeed + " km/h" : ""));
+    speak("Radar marcado en esta posición");
+  }
+
+  // ---------- panel: añadir / gestionar radares manualmente ----------
+  var manageOverlay = $("manage-overlay"), manageLink = $("manage-link"), manageClose = $("manage-close");
+  var manageList = $("manage-list"), manageMsg = $("manage-msg");
+  var formFijo = $("form-fijo"), formTramo = $("form-tramo");
+
+  function parseCoordPair(str){
+    if (!str) throw new Error("Escribe unas coordenadas");
+    var parts = str.split(",");
+    if (parts.length !== 2) throw new Error("Formato esperado: latitud, longitud");
+    var lat = parseFloat(parts[0].trim().replace(",", "."));
+    var lon = parseFloat(parts[1].trim().replace(",", "."));
+    if (isNaN(lat) || isNaN(lon)) throw new Error("No pude leer esos números");
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) throw new Error("Esas coordenadas están fuera de rango");
+    return { lat: lat, lon: lon };
+  }
+
+  function showManageMsg(text, ok){
+    manageMsg.textContent = text;
+    manageMsg.className = ok ? "ok" : "err";
+  }
+
+  function openManage(){
+    manageOverlay.classList.add("show");
+    manageMsg.textContent = "";
+    renderManageList();
+  }
+  function closeManage(){ manageOverlay.classList.remove("show"); }
+
+  manageLink.addEventListener("click", function(e){ e.preventDefault(); openManage(); });
+  manageClose.addEventListener("click", closeManage);
+  manageOverlay.addEventListener("click", function(e){ if (e.target === manageOverlay) closeManage(); });
+
+  // toggle Fijo / Tramo
+  document.querySelectorAll(".seg-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      document.querySelectorAll(".seg-btn").forEach(function(b){ b.classList.remove("active"); });
+      btn.classList.add("active");
+      var esFijo = btn.dataset.type === "fijo";
+      formFijo.style.display = esFijo ? "block" : "none";
+      formTramo.style.display = esFijo ? "none" : "block";
+      manageMsg.textContent = "";
+    });
+  });
+
+  // botones "usar mi posición actual" — piden una localización puntual, no dependen de que la app esté "Iniciada"
+  document.querySelectorAll(".gps-btn").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var targetInput = $(btn.dataset.target);
+      if (!('geolocation' in navigator)) { showManageMsg("Este navegador no soporta geolocalización", false); return; }
+      btn.textContent = "…";
+      navigator.geolocation.getCurrentPosition(function(pos){
+        targetInput.value = pos.coords.latitude.toFixed(6) + ", " + pos.coords.longitude.toFixed(6);
+        btn.textContent = "📡";
+      }, function(err){
+        btn.textContent = "📡";
+        showManageMsg("No pude obtener tu posición: " + err.message, false);
+      }, { enableHighAccuracy: true, timeout: 8000 });
+    });
+  });
+
+  function addEntry(entry){
+    var marks = loadMarks();
+    marks.push(entry);
+    saveMarks(marks);
+    if (camerasLoaded) mergeMarksIntoCameras();
+  }
+
+  $("f-add").addEventListener("click", function(){
+    try {
+      var coords = parseCoordPair($("f-coords").value);
+      var limit = $("f-limit").value ? parseInt($("f-limit").value, 10) : null;
+      var via = $("f-via").value.trim() || null;
+      addEntry({
+        id: makeId(), tipo: "fijo", lat: coords.lat, lon: coords.lon,
+        maxspeed: limit, via: via, propio: true, fecha: new Date().toISOString()
+      });
+      $("f-coords").value = ""; $("f-limit").value = ""; $("f-via").value = "";
+      showManageMsg("✓ Radar añadido", true);
+      renderManageList();
+    } catch(err){ showManageMsg(err.message, false); }
+  });
+
+  $("t-add").addEventListener("click", function(){
+    try {
+      var a = parseCoordPair($("t-coords-a").value);
+      var b = parseCoordPair($("t-coords-b").value);
+      var limit = $("t-limit").value ? parseInt($("t-limit").value, 10) : null;
+      var via = $("t-via").value.trim() || null;
+      var tramoId = makeId();
+      var fecha = new Date().toISOString();
+      addEntry({ id: makeId(), tipo: "tramo", rol: "inicio", tramoId: tramoId, lat: a.lat, lon: a.lon, maxspeed: limit, via: via, propio: true, fecha: fecha });
+      addEntry({ id: makeId(), tipo: "tramo", rol: "fin",    tramoId: tramoId, lat: b.lat, lon: b.lon, maxspeed: limit, via: via, propio: true, fecha: fecha });
+      $("t-coords-a").value = ""; $("t-coords-b").value = ""; $("t-limit").value = ""; $("t-via").value = "";
+      showManageMsg("✓ Tramo añadido (inicio y fin)", true);
+      renderManageList();
+    } catch(err){ showManageMsg(err.message, false); }
+  });
+
+  function deleteById(id){
+    var marks = loadMarks().filter(function(m){ return m.id !== id; });
+    saveMarks(marks);
+    if (camerasLoaded) mergeMarksIntoCameras();
+    renderManageList();
+  }
+  function deleteByTramoId(tramoId){
+    var marks = loadMarks().filter(function(m){ return m.tramoId !== tramoId; });
+    saveMarks(marks);
+    if (camerasLoaded) mergeMarksIntoCameras();
+    renderManageList();
+  }
+
+  function renderManageList(){
+    var marks = loadMarks();
+    manageList.innerHTML = "";
+    if (!marks.length) {
+      manageList.innerHTML = '<div id="manage-empty">Todavía no has añadido ningún radar.</div>';
+      return;
+    }
+
+    // agrupa los tramos (inicio+fin comparten tramoId) en una sola fila
+    var vistos = {};
+    marks.forEach(function(m){
+      if (m.tramoId) {
+        if (vistos[m.tramoId]) return;
+        vistos[m.tramoId] = true;
+        var par = marks.filter(function(x){ return x.tramoId === m.tramoId; });
+        var ini = par.filter(function(x){ return x.rol === "inicio"; })[0] || par[0];
+        var fin = par.filter(function(x){ return x.rol === "fin"; })[0] || par[1];
+        var row = document.createElement("div");
+        row.className = "mrow";
+        row.innerHTML =
+          '<div class="mmeta"><b>↔ Tramo' + (ini.via ? " — " + escapeHtml(ini.via) : "") + '</b>' +
+          '<span>' + ini.lat.toFixed(4) + ',' + ini.lon.toFixed(4) + ' → ' + (fin ? fin.lat.toFixed(4) + ',' + fin.lon.toFixed(4) : '?') +
+          (ini.maxspeed ? ' · ' + ini.maxspeed + ' km/h' : '') + '</span></div>';
+        var del = document.createElement("button");
+        del.className = "mdel"; del.textContent = "✕";
+        del.addEventListener("click", function(){ deleteByTramoId(m.tramoId); });
+        row.appendChild(del);
+        manageList.appendChild(row);
+      } else {
+        var row2 = document.createElement("div");
+        row2.className = "mrow";
+        row2.innerHTML =
+          '<div class="mmeta"><b>📍 Radar fijo' + (m.via ? " — " + escapeHtml(m.via) : "") + '</b>' +
+          '<span>' + m.lat.toFixed(4) + ', ' + m.lon.toFixed(4) + (m.maxspeed ? ' · ' + m.maxspeed + ' km/h' : '') + '</span></div>';
+        var del2 = document.createElement("button");
+        del2.className = "mdel"; del2.textContent = "✕";
+        del2.addEventListener("click", function(){ deleteById(m.id); });
+        row2.appendChild(del2);
+        manageList.appendChild(row2);
+      }
+    });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, function(c){
+      return ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" })[c];
+    });
+  }
+
+  // ---------- mapa en vivo de Waze (iframe oficial embed.waze.com, documentado por Waze/Google) ----------
+  var wazeOverlay = $("waze-overlay"), wazeLink = $("waze-link"), wazeClose = $("waze-close");
+  var wazeIframe = $("waze-iframe"), wazeEmpty = $("waze-empty"), wazeRecenter = $("waze-recenter");
+
+  function wazeSrcFor(lat, lon){
+    return "https://embed.waze.com/iframe?zoom=15&lat=" + lat.toFixed(6) + "&lon=" + lon.toFixed(6) + "&pin=1";
+  }
+
+  function loadWazeMap(){
+    if (lastPos) {
+      wazeIframe.src = wazeSrcFor(lastPos.coords.latitude, lastPos.coords.longitude);
+      wazeIframe.style.display = "block";
+      wazeEmpty.style.display = "none";
+    } else if ('geolocation' in navigator) {
+      wazeEmpty.style.display = "flex";
+      wazeIframe.style.display = "none";
+      navigator.geolocation.getCurrentPosition(function(pos){
+        wazeIframe.src = wazeSrcFor(pos.coords.latitude, pos.coords.longitude);
+        wazeIframe.style.display = "block";
+        wazeEmpty.style.display = "none";
+      }, function(){
+        wazeEmpty.textContent = "No se pudo obtener tu posición. Mostrando España en general.";
+        wazeIframe.src = wazeSrcFor(40.4168, -3.7038);
+        wazeIframe.style.display = "block";
+        wazeEmpty.style.display = "none";
+      }, { enableHighAccuracy: true, timeout: 8000 });
+    } else {
+      wazeIframe.src = wazeSrcFor(40.4168, -3.7038);
+    }
+  }
+
+  wazeLink.addEventListener("click", function(e){
+    e.preventDefault();
+    wazeOverlay.classList.add("show");
+    loadWazeMap();
+  });
+  wazeClose.addEventListener("click", function(){
+    wazeOverlay.classList.remove("show");
+    wazeIframe.src = ""; // libera el iframe cuando no se está viendo
+  });
+  wazeRecenter.addEventListener("click", loadWazeMap);
+
+  // ---------- importar el XML oficial completo de la DGT (se procesa 100% en el navegador) ----------
+  var OFFICIAL_KEY = "radares_oficiales_importados_v1";
+
+  function loadOfficialImported(){
+    try {
+      var raw = localStorage.getItem(OFFICIAL_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch(e) { return []; }
+  }
+  function saveOfficialImported(list){
+    try { localStorage.setItem(OFFICIAL_KEY, JSON.stringify(list)); } catch(e) {}
+  }
+
+  function parseDgtXml(xmlText){
+    var xmlDoc = new DOMParser().parseFromString(xmlText, "application/xml");
+    var errorNode = xmlDoc.querySelector("parsererror");
+    if (errorNode) throw new Error("El archivo no es un XML válido");
+
+    var points = xmlDoc.getElementsByTagNameNS("*", "pointCoordinates");
+    if (!points.length) throw new Error("No encontré coordenadas en este archivo (¿es el XML de la DGT?)");
+
+    var out = [], seen = {};
+    for (var i = 0; i < points.length; i++) {
+      var latEl = points[i].getElementsByTagNameNS("*", "latitude")[0];
+      var lonEl = points[i].getElementsByTagNameNS("*", "longitude")[0];
+      if (!latEl || !lonEl) continue;
+      var lat = parseFloat(latEl.textContent);
+      var lon = parseFloat(lonEl.textContent);
+      if (isNaN(lat) || isNaN(lon)) continue;
+      var key = lat.toFixed(5) + "," + lon.toFixed(5);
+      if (seen[key]) continue;
+      seen[key] = true;
+      out.push({ lat: lat, lon: lon, maxspeed: null, fuente: "DGT" });
+    }
+    return out;
+  }
+
+  function handleImportFile(file){
+    importStatus.className = "";
+    importStatus.textContent = "Leyendo archivo…";
+    var reader = new FileReader();
+    reader.onerror = function(){
+      importStatus.className = "err";
+      importStatus.textContent = "No se pudo leer el archivo.";
+    };
+    reader.onload = function(){
+      try {
+        var puntos = parseDgtXml(reader.result);
+        saveOfficialImported(puntos);
+        importStatus.className = "ok";
+        importStatus.textContent = "✓ " + puntos.length + " radares oficiales importados y guardados en este navegador.";
+        if (camerasLoaded) loadLocalCameras(); // refresca en caliente si ya estaba corriendo
+      } catch(err) {
+        importStatus.className = "err";
+        importStatus.textContent = "Error: " + err.message;
+      }
+    };
+    reader.readAsText(file, "UTF-8");
+  }
+
+  importLink.addEventListener("click", function(e){
+    e.preventDefault();
+    importFile.click();
+  });
+  importFile.addEventListener("change", function(){
+    if (importFile.files && importFile.files[0]) handleImportFile(importFile.files[0]);
+  });
+
+  (function initImportStatus(){
+    var previos = loadOfficialImported();
+    if (previos.length) {
+      importStatus.className = "ok";
+      importStatus.textContent = "✓ Ya tienes " + previos.length + " radares oficiales importados en este navegador.";
+    }
+  })();
+
+
+  function updateSpeedDisplay(kmh){
+    var limit = limitInput.value ? parseInt(limitInput.value, 10) : null;
+    speedEl.textContent = (kmh == null || isNaN(kmh)) ? "— km/h" : Math.round(kmh) + " km/h";
+    var over = !!(limit && kmh != null && !isNaN(kmh) && kmh > limit);
+
+    if (over) {
+      speedEl.classList.add("over");
+      var now = Date.now();
+      if (!speedOverActive || (now - lastSpeedAlertAt) > SPEED_ALERT_COOLDOWN) {
+        speak("Cuidado, superas el límite. Vas a " + Math.round(kmh) + ", límite " + limit + ".");
+        lastSpeedAlertAt = now;
+      }
+      speedOverActive = true;
+    } else {
+      speedEl.classList.remove("over");
+      speedOverActive = false;
+    }
+  }
+
+  limitInput.addEventListener("change", function(){
+    if (lastPos && lastPos.coords.speed != null) {
+      updateSpeedDisplay(lastPos.coords.speed * 3.6);
+    }
+  });
+  btnMark.addEventListener("click", markRadarHere);
+
+
+  function setGpsLabel(text){ gpsLabel.textContent = text; }
+
+  function keyFor(c){ return c.lat.toFixed(5) + "," + c.lon.toFixed(5); }
+
+  function render(pos, heading, speedMps){
+    var lat = pos.coords.latitude, lon = pos.coords.longitude;
+
+    // compute ahead-of-travel candidates
+    var scored = cameras.map(function(c){
+      var dist = haversine(lat, lon, c.lat, c.lon);
+      var brg = bearing(lat, lon, c.lat, c.lon);
+      var ahead = (heading == null) ? true : angleDiff(brg, heading) < 60;
+      return { c: c, dist: dist, ahead: ahead };
+    }).filter(function(s){ return s.ahead && s.dist < 6000; })
+      .sort(function(a,b){ return a.dist - b.dist; });
+
+    // upcoming chips (top 5 within ALERT_FAR*4)
+    upcomingEl.innerHTML = "";
+    scored.slice(0, 6).forEach(function(s){
+      var div = document.createElement("div");
+      div.className = "chip";
+      var d = document.createElement("div"); d.className = "d";
+      d.textContent = s.dist < 1000 ? Math.round(s.dist) + " m" : (s.dist/1000).toFixed(1) + " km";
+      var t = document.createElement("div"); t.className = "t";
+      var tipoTxt = s.c.tipo === "tramo" ? ("Tramo " + (s.c.rol === "inicio" ? "(inicio)" : "(fin)")) : (s.c.propio ? "Tuyo" : "Radar");
+      t.textContent = (s.c.propio && s.c.tipo !== "tramo" ? "📍 " : "") + tipoTxt + (s.c.maxspeed ? " · " + s.c.maxspeed + " km/h" : "");
+      div.appendChild(d); div.appendChild(t);
+      upcomingEl.appendChild(div);
+    });
+
+    var nearest = scored[0];
+
+    // "radar superado": si el que estaba cerca ya no está por delante, lo diste por pasado
+    if (nearest && nearest.dist <= ALERT_MID) {
+      lastActiveKey = keyFor(nearest.c);
+      lastActiveWasClose = true;
+    } else if (lastActiveWasClose && lastActiveKey) {
+      var stillAhead = scored.some(function(s){ return keyFor(s.c) === lastActiveKey; });
+      if (!stillAhead) speak("Radar superado. Buen viaje.");
+      lastActiveWasClose = false;
+      lastActiveKey = null;
+    }
+
+    if (!nearest || nearest.dist > ALERT_FAR * 3) {
+      hero.classList.remove("alert-near", "alert-mid");
+      iconEl.classList.remove("armed", "close");
+      ringWrap.classList.remove("pulse");
+      ringProgress.classList.remove("mid", "close");
+      ringProgress.style.strokeDashoffset = RING_CIRC;
+      idleMsg.style.display = "block";
+      idleMsg.textContent = "Sin radares en los próximos kilómetros. Buen viaje.";
+      liveReadout.style.display = "none";
+      detailEl.textContent = "";
+      return;
+    }
+
+    idleMsg.style.display = "none";
+    liveReadout.style.display = "block";
+
+    var dist = nearest.dist;
+    var meters = Math.round(dist);
+    distEl.textContent = meters < 1000 ? meters : (dist/1000).toFixed(1);
+    distUnit.textContent = meters < 1000 ? "metros" : "km";
+
+    var label;
+    if (nearest.c.tipo === "tramo") {
+      label = "Control de tramo (" + (nearest.c.rol === "inicio" ? "inicio" : "fin") + ")" + (nearest.c.maxspeed ? " — límite " + nearest.c.maxspeed + " km/h" : "");
+    } else {
+      label = nearest.c.maxspeed ? ("Límite " + nearest.c.maxspeed + " km/h") : "Radar de velocidad";
+    }
+    detailEl.innerHTML = "<b>" + label + "</b> — en tu dirección de viaje";
+
+    hero.classList.remove("alert-near", "alert-mid");
+    iconEl.classList.remove("armed", "close");
+    distEl.classList.remove("close", "mid");
+    ringProgress.classList.remove("mid", "close");
+    ringWrap.classList.remove("pulse");
+
+    var fraction = Math.max(0, Math.min(1, 1 - (dist / ALERT_FAR)));
+    ringProgress.style.strokeDashoffset = (RING_CIRC * (1 - fraction)).toFixed(1);
+
+    if (dist <= ALERT_NEAR) {
+      hero.classList.add("alert-near"); iconEl.classList.add("close"); distEl.classList.add("close");
+      ringProgress.classList.add("close"); ringWrap.classList.add("pulse");
+    } else if (dist <= ALERT_MID) {
+      hero.classList.add("alert-mid"); iconEl.classList.add("armed"); distEl.classList.add("mid");
+      ringProgress.classList.add("mid");
+    } else if (dist <= ALERT_FAR) {
+      iconEl.classList.add("armed");
+    }
+
+    // voice announcements — el tono escala según lo cerca que estés
+    var key = keyFor(nearest.c);
+    if (!announced[key]) announced[key] = {};
+    ANNOUNCE_AT.forEach(function(threshold, idx){
+      if (dist <= threshold && !announced[key][threshold]) {
+        announced[key][threshold] = true;
+        speakRadarAlert(idx, threshold, nearest.c);
+      }
+    });
+
+    // clear announcement memory for cameras now far behind (basic cleanup)
+    Object.keys(announced).forEach(function(k){
+      var stillNear = scored.some(function(s){ return keyFor(s.c) === k && s.dist < ALERT_FAR * 2; });
+      if (!stillNear) delete announced[k];
+    });
+  }
+
+  // ---------- geolocation loop ----------
+  function onPosition(pos){
+    var lat = pos.coords.latitude, lon = pos.coords.longitude;
+    var speedMps = pos.coords.speed;
+    var heading = pos.coords.heading;
+
+    // derive heading from movement if device doesn't report it
+    if ((heading == null || isNaN(heading)) && lastPos) {
+      var moved = haversine(lastPos.coords.latitude, lastPos.coords.longitude, lat, lon);
+      if (moved > 5) heading = bearing(lastPos.coords.latitude, lastPos.coords.longitude, lat, lon);
+      else heading = lastHeading;
+    }
+    lastHeading = heading;
+    lastPos = pos;
+
+    gpsDot.className = "dot live";
+    setGpsLabel("GPS activo");
+    updateSpeedDisplay(speedMps == null || isNaN(speedMps) ? null : speedMps * 3.6);
+
+    render(pos, heading, speedMps);
+  }
+
+  function onPositionError(err){
+    gpsDot.className = "dot err";
+    setGpsLabel("Sin señal GPS (" + err.message + ")");
+  }
+
+  // ---------- controls ----------
+  function start(){
+    if (!('geolocation' in navigator)) {
+      setGpsLabel("Este navegador no soporta geolocalización");
+      return;
+    }
+    running = true;
+    btnStart.style.display = "none";
+    btnStop.style.display = "block";
+    btnMute.style.display = "block";
+    gpsDot.className = "dot";
+    setGpsLabel("Cargando radares…");
+    if (!camerasLoaded) loadLocalCameras();
+    else mergeMarksIntoCameras();
+    btnMark.style.display = "flex";
+    // primer "toque de usuario" habilita la síntesis de voz en algunos navegadores
+    speak("Aviso de radares activado");
+    watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true, maximumAge: 1000, timeout: 10000
+    });
+  }
+
+  function stop(){
+    running = false;
+    if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    btnStart.style.display = "block";
+    btnStop.style.display = "none";
+    btnMute.style.display = "none";
+    btnMark.style.display = "none";
+    gpsDot.className = "dot";
+    setGpsLabel("GPS desconectado");
+    speedEl.textContent = "— km/h";
+    idleMsg.style.display = "block";
+    idleMsg.textContent = "Pulsa «Iniciar» para activar el aviso de radares durante tu trayecto.";
+    liveReadout.style.display = "none";
+    detailEl.textContent = "";
+    upcomingEl.innerHTML = "";
+    hero.classList.remove("alert-near", "alert-mid");
+    ringWrap.classList.remove("pulse");
+    ringProgress.classList.remove("mid", "close");
+    ringProgress.style.strokeDashoffset = RING_CIRC;
+    lastActiveKey = null; lastActiveWasClose = false;
+    speedOverActive = false;
+    window.speechSynthesis && window.speechSynthesis.cancel();
+  }
+
+  btnStart.addEventListener("click", start);
+  btnStop.addEventListener("click", stop);
+  btnMute.addEventListener("click", function(){
+    muted = !muted;
+    btnMute.dataset.muted = muted ? "true" : "false";
+    btnMute.innerHTML = muted
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><line x1="16" y1="9" x2="21" y2="14"/><line x1="21" y1="9" x2="16" y2="14"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>';
+    if (muted) window.speechSynthesis && window.speechSynthesis.cancel();
+  });
+
+  // keep screen awake while running, when supported
+  var wakeLock = null;
+  document.addEventListener("visibilitychange", function(){
+    if (running && wakeLock === null && document.visibilityState === "visible" && 'wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then(function(wl){ wakeLock = wl; }).catch(function(){});
+    }
+  });
+  if ('wakeLock' in navigator) {
+    navigator.wakeLock.request('screen').then(function(wl){ wakeLock = wl; }).catch(function(){});
+  }
+
+})();
+</script>
+</body>
+</html>
